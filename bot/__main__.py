@@ -71,7 +71,11 @@ async def main() -> None:
     if not settings.admin_ids:
         log.warning("ADMIN_IDS порожній: адмін-команди недоступні нікому")
 
-    bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    # Без прев'ю посилань: у тексті призів є лінк на LinkedIn, а картка з прев'ю захаращує чат.
+    bot = Bot(
+        settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True),
+    )
     media = MediaService(session_factory, settings.content_root)
     game = GameService(
         session_factory, content, TelegramMessenger(bot, content, media, session_factory)

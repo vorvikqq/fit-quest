@@ -72,6 +72,14 @@ ROUNDS: list[dict[str, Any]] = [
 TOTAL = 5
 
 
+def make_todo_content() -> Content:
+    """Контент, де два питання не готові (`todo` і `correct: null`): перевірка блокування старту (FR-30)."""
+    rounds = copy.deepcopy(ROUNDS)
+    rounds[0]["sections"][0]["questions"][0]["todo"] = "дописати пояснення"
+    rounds[1]["sections"][0]["questions"][1]["correct"] = None
+    return make_content(rounds)
+
+
 def make_content(rounds: list[dict[str, Any]] | None = None) -> Content:
     raw = yaml.safe_load((PROJECT_ROOT / "content" / "quest.yaml").read_text(encoding="utf-8"))
     raw["rounds"] = copy.deepcopy(rounds or ROUNDS)

@@ -72,9 +72,9 @@ def test_plan_is_seeded_and_json_friendly():
     json.dumps(build_plan(content, random.Random(7)))
 
 
-def test_real_content_plan_covers_all_55_questions(real):
+def test_real_content_plan_covers_every_question(real):
     plan = build_plan(real, random.Random(0))
-    assert len(plan) == 55 and len({e["qid"] for e in plan}) == 55
+    assert len(plan) == real.question_count == 50 and len({e["qid"] for e in plan}) == 50
     # раунд 2 і 3 — з перемішаними питаннями, раунд 1 — ні
     assert [e["qid"] for e in plan[:10]] == [f"r1q{i:02d}" for i in range(1, 11)]
 
@@ -147,15 +147,55 @@ def test_every_real_question_renders_to_valid_html(real):
         assert len(view.buttons) in (2, 4)
 
 
-def test_real_r5g01_with_long_prompts_is_split(real):
+def test_real_r5_photo_and_prompt_questions_fit_in_caption(real):
+    """У фінальному контенті промпти короткі: усі фото йдуть підписом, розбиття не потрібне.
+
+    Випадок «підпис > 1024» лишається покритим синтетичним `test_long_caption_with_image_is_split`.
+    """
     index = ContentIndex(real)
     plan = build_plan(real, random.Random(0))
-    cursor = next(i for i, e in enumerate(plan) if e["qid"] == "r5g01")
-    assert render_question(index, plan, cursor).split
-    # а фото без довгого тексту йдуть підписом
-    cursor = next(i for i, e in enumerate(plan) if e["qid"] == "r5p01")
-    view = render_question(index, plan, cursor)
-    assert view.caption_mode
+    with_images = [i for i, e in enumerate(plan) if index.info(e["qid"]).question.image]
+    assert len(with_images) == 10
+    for cursor in with_images:
+        view = render_question(index, plan, cursor)
+        assert view.caption_mode and not view.split, plan[cursor]["qid"]
+
+
+def test_real_round5_has_two_sections_and_numbers_come_from_content(real):
+    """Нічого не прописано жорстко: «Раунд X/5 · Питання Y/Z» і картки беруться з контенту."""
+    index = ContentIndex(real)
+    plan = build_plan(real, random.Random(0))
+    r5 = real.rounds[4]
+    assert [s.id for s in r5.sections] == ["r5s2", "r5s3"]
+    size = sum(len(s.questions) for s in r5.sections)
+    assert size == 10 and index.round_size("r5") == size
+
+    first = next(i for i, e in enumerate(plan) if index.info(e["qid"]).round.id == "r5")
+    last = len(plan) - 1
+    assert index.position_in_round(plan, first) == (1, size)
+    assert index.position_in_round(plan, last) == (size, size)
+    assert f"Раунд 5/{len(real.rounds)} · Питання 1/{size}" in render_question(index, plan, first).text
+    assert f"Раунд 5/{len(real.rounds)} · Питання {size}/{size}" in render_question(index, plan, last).text
+
+    # картка раунду 5 — про фото (перша секція), а друга секція отримує власну картку
+    card = render_card(index, plan, first)
+    assert "Раунд 5" in card and f"Питань: {len(r5.sections[0].questions)}" in card
+    second = first + len(r5.sections[0].questions)
+    assert index.boundary_at(plan, second) == "section"
+    assert f"Питань: {len(r5.sections[1].questions)}" in render_card(index, plan, second)
+
+
+def test_header_and_cards_follow_content_when_a_section_is_removed():
+    """Прибрали секцію з контенту: нумерація й підсумки змінюються самі, без правок коду."""
+    content = make_content()
+    full_index = ContentIndex(content)
+    assert full_index.round_size("r2") == 3
+    content.rounds[1].sections.pop()  # лишається лише s2a: 2 питання
+    index = ContentIndex(content)
+    plan = build_plan(content, random.Random(0))
+    assert len(plan) == 4 and index.round_size("r2") == 2
+    assert "Питання 2/2" in render_question(index, plan, 3).text
+    assert "Раунд 2/2" in render_question(index, plan, 2).text
 
 
 def test_split_threshold_counts_utf16_units():

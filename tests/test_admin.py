@@ -6,6 +6,7 @@ from bot import texts
 from bot.db import repo
 from bot.db.models import Phase
 from bot.keyboards import START_GAME_DATA, AdminAct, Confirm
+from tests.factory import make_todo_content
 from tests.harness import ADMIN_ID, Harness
 
 U = 5001
@@ -13,7 +14,7 @@ U = 5001
 
 @pytest.fixture
 def h(session_factory) -> Harness:
-    return Harness(session_factory)
+    return Harness(session_factory, content=make_todo_content())  # 2 незаповнені питання
 
 
 async def game(session_factory):
@@ -77,7 +78,7 @@ async def test_admin_panel_shows_state_and_counters(h, session_factory):
     assert "DRAFT" in panel and "закрита" in panel
     assert "<code>CODE</code>" in panel
     assert "Зареєстровано: <b>3</b>" in panel
-    assert "TODO: 16" in panel and "55 питань" in panel
+    assert "TODO: 2" in panel and "5 питань" in panel
     assert set(h.button_data(ADMIN_ID)) == {
         AdminAct(action=a).pack() for a in ("open_reg", "close_reg", "start_quest", "refresh")
     }
@@ -193,7 +194,7 @@ async def test_start_quest_refused_before_registration(h, session_factory):
 async def test_start_quest_blocked_by_todo(h, session_factory):
     await set_state(session_factory, phase=Phase.REGISTRATION.value, registration_open=True)
     await h.send(ADMIN_ID, "/start_quest")
-    assert "16 незаповнених" in h.last_text(ADMIN_ID)
+    assert "2 незаповнених" in h.last_text(ADMIN_ID)
     assert h.button_data(ADMIN_ID) == []
     assert (await game(session_factory)).phase == Phase.REGISTRATION
 

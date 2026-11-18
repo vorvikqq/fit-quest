@@ -219,10 +219,10 @@ async def test_export_on_empty_database_still_returns_headers(h, session_factory
 # --- /validate ------------------------------------------------------------
 
 
-async def test_validate_reports_todo_for_real_file(h, session_factory):
+async def test_validate_says_final_content_is_ready(h, session_factory):
     await h.send(ADMIN_ID, "/validate")
     text = "\n".join(h.texts(ADMIN_ID))
-    assert "питань: 55" in text and "Незаповнених (TODO): 16" in text and "r4q01" in text
+    assert "питань: 50" in text and "Контент готовий до старту" in text
     assert text.startswith("<pre>")
 
 
@@ -278,7 +278,7 @@ async def test_reload_refuses_broken_file_and_keeps_old_content(session_factory,
     edit(editable_yaml, "correct: 1\n            explanation: \"Двійкова", "correct: 9\n            explanation: \"Двійкова")
     await h2.send(ADMIN_ID, "/reload_content")
     assert "лишаю попередню версію" in h2.last_text(ADMIN_ID)
-    assert h2.game.content.question_count == 55
+    assert h2.game.content.question_count == 50
 
     editable_yaml.write_text("rounds: [", encoding="utf-8")
     await h2.send(ADMIN_ID, "/reload_content")
