@@ -7,11 +7,23 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from aiogram import Bot
+from aiogram.types import FSInputFile
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from bot.content.models import Content
 from bot.db import repo
+
+
+@dataclass
+class WarmupResult:
+    uploaded: list[str] = field(default_factory=list)
+    cached: list[str] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
 
 
 class MediaService:
@@ -45,3 +57,18 @@ class MediaService:
     async def remember(self, rel: str, file_id: str) -> None:
         async with self._session_factory.begin() as session:
             await repo.set_media(session, rel, self.sha256(rel), file_id)
+
+    async def warmup(self, bot: Bot, chat_id: int, content: Content) -> WarmupResult:
+        """`/warmup`: надсилає адміну картинки без актуального `file_id` й запам'ятовує його."""
+        result = WarmupResult()
+        images = sorted({q.image for _, _, q in content.iter_questions() if q.image})
+        for rel in images:
+            if not self.path(rel).is_file():
+                result.missing.append(rel)
+            elif await self.cached_file_id(rel) is not None:
+                result.cached.append(rel)
+            else:
+                msg = await bot.send_photo(chat_id, FSInputFile(self.path(rel)), caption=rel)
+                await self.remember(rel, msg.photo[-1].file_id)
+                result.uploaded.append(rel)
+        return result

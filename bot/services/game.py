@@ -61,6 +61,13 @@ class GameService:
         self.scheduler = scheduler or TimerScheduler()
         self.grace = grace
 
+    def set_content(self, content: Content) -> None:
+        """Гаряче підміняє контент (`/reload_content`). Спроби посилаються лише на `qid`."""
+        self.content = content
+        self.index = ContentIndex(content)
+        if hasattr(self.messenger, "content"):
+            self.messenger.content = content  # type: ignore[attr-defined]
+
     # ------------------------------------------------------------------
     # Старт і відновлення (§6.1, §3.2)
     # ------------------------------------------------------------------

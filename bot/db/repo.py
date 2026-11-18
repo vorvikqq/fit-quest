@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -465,3 +465,49 @@ async def set_media(session: AsyncSession, path: str, sha256: str, file_id: str)
         set_={"sha256": stmt.excluded.sha256, "file_id": stmt.excluded.file_id},
     )
     await session.execute(stmt)
+
+
+# ---------------------------------------------------------------------------
+# Службові операції адміна
+# ---------------------------------------------------------------------------
+
+
+async def delete_attempt_for_user(session: AsyncSession, tg_id: int) -> bool:
+    """`/reset_me` (FR-31): видаляє спробу разом з відповідями (CASCADE)."""
+    result = await session.execute(delete(Attempt).where(Attempt.tg_id == tg_id))
+    return result.rowcount == 1
+
+
+async def reset_event(session: AsyncSession) -> None:
+    """`/reset_all`: стирає спроби, відповіді й учасників (NFR-8) і повертає етап у DRAFT.
+
+    Рядки адмінів лишаються (їхня реєстрація очищується); кодове слово зберігається.
+    """
+    await session.execute(delete(Answer))
+    await session.execute(delete(Attempt))
+    await session.execute(delete(User).where(User.is_admin.is_(False)))
+    await session.execute(
+        update(User).values(
+            full_name=None, status=None, course=None, registered_at=None, excluded=False, blocked_bot=False
+        )
+    )
+    await session.execute(
+        update(GameState)
+        .where(GameState.id == 1)
+        .values(
+            phase=Phase.DRAFT.value,
+            registration_open=False,
+            started_at=None,
+            closes_at=None,
+            closed_at=None,
+            content_hash=None,
+        )
+    )
+
+
+async def list_plan_qids(session: AsyncSession) -> set[str]:
+    """Усі `qid`, які зустрічаються в планах спроб (для безпечного /reload_content)."""
+    qids: set[str] = set()
+    for plan in (await session.execute(select(Attempt.plan))).scalars():
+        qids.update(entry["qid"] for entry in plan)
+    return qids

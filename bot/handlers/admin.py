@@ -354,6 +354,15 @@ async def on_confirm(
         return
 
     action = callback_data.action
+    if action == "reset_all" and callback_data.arg == 0:
+        # Подвійне підтвердження (DESIGN §10): перше «так» лише веде до другого.
+        if isinstance(callback.message, Message):
+            with contextlib.suppress(TelegramAPIError):
+                await callback.message.edit_text(
+                    texts.second_confirm("reset_all"), reply_markup=confirm_kb("reset_all", arg=1)
+                )
+        return
+
     now = datetime.now(UTC)
     followup: Awaitable[None] | None = None
     closed: list = []
@@ -398,6 +407,9 @@ async def on_confirm(
                 await phases.publish_results(session)
                 notified = len(await repo.leaderboard(session))
                 followup = _publish_results(game, broadcaster, session_factory, admin_id)
+            elif action == "reset_all":
+                await phases.reset_all(session)
+                game.scheduler.cancel_all()
             elif action == "broadcast":
                 text = pending_broadcasts.pop(admin_id, None)
                 if text is None:

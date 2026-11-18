@@ -83,6 +83,8 @@ async def main() -> None:
         admin_ids=settings.admin_ids,
         broadcaster=Broadcaster(bot, session_factory),
         game=game,
+        media=media,
+        content_path=settings.content_path,
     )
 
     try:

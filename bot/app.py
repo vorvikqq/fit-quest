@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from aiogram import Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from bot.content.loader import Report
 from bot.content.models import Content
-from bot.handlers import admin, after_game, registration
+from bot.handlers import admin, admin_tools, after_game, registration
 from bot.handlers import game as game_handlers
 from bot.middlewares import ThrottlingMiddleware, UserUpsertMiddleware
 from bot.services.broadcast import Broadcaster
 from bot.services.game import GameService
+from bot.services.media import MediaService
 from bot.services.ratelimit import SlidingWindowLimiter
 
 CODE_ATTEMPTS_PER_MINUTE = 5  # DESIGN §13
@@ -27,6 +30,8 @@ def build_dispatcher(
     admin_ids: list[int],
     broadcaster: Broadcaster,
     game: GameService,
+    media: MediaService,
+    content_path: Path,
     throttle_interval: float = 0.5,
 ) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
@@ -39,6 +44,8 @@ def build_dispatcher(
     dp["admin_ids"] = admin_ids
     dp["broadcaster"] = broadcaster
     dp["game"] = game
+    dp["media"] = media
+    dp["content_path"] = content_path
     dp["code_limiter"] = SlidingWindowLimiter(CODE_ATTEMPTS_PER_MINUTE, 60)
 
     # Порядок: throttling (дешево, відсікає спам) → user-upsert → хендлери.
@@ -49,6 +56,7 @@ def build_dispatcher(
 
     # Порядок роутерів важливий: admin → game → after_game → registration (з fallback наприкінці).
     dp.include_router(admin.router)
+    dp.include_router(admin_tools.router)
     dp.include_router(game_handlers.router)
     dp.include_router(after_game.router)
     dp.include_router(registration.router)

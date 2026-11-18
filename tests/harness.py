@@ -13,6 +13,7 @@ from aiogram.methods import (
     EditMessageCaption,
     EditMessageReplyMarkup,
     EditMessageText,
+    SendDocument,
     SendMessage,
     SendPhoto,
     TelegramMethod,
@@ -23,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from bot.app import build_dispatcher
 from bot.config import PROJECT_ROOT
 from bot.content.loader import load_and_validate, validate_content
-from bot.handlers import admin, after_game, registration
+from bot.handlers import admin, admin_tools, after_game, registration
 from bot.handlers import game as game_handlers
 from bot.services.broadcast import Broadcaster
 from bot.services.game import GameService
@@ -71,6 +72,7 @@ class Harness:
         admin_ids=(ADMIN_ID,),
         throttle_interval: float = 0.0,  # у тестах кнопки тиснуться підряд
         content=None,
+        content_path=None,
     ):
         self.session = RecordingSession()
         self.bot = Bot("123456:TEST", session=self.session)
@@ -79,9 +81,10 @@ class Harness:
             self.content, self.report = content, validate_content(content, PROJECT_ROOT / "content")
         # Роутери модульні (по одному на процес), а aiogram не дозволяє підключити їх до
         # другого Dispatcher. У проді Dispatcher один; тестам потрібен свіжий на кожен тест.
-        for router in (admin.router, game_handlers.router, after_game.router, registration.router):
+        for router in (admin.router, admin_tools.router, game_handlers.router, after_game.router, registration.router):
             router._parent_router = None
         media = MediaService(session_factory, PROJECT_ROOT / "content")
+        self.media = media
         self.game = GameService(
             session_factory,
             self.content,
@@ -95,6 +98,8 @@ class Harness:
             admin_ids=list(admin_ids),
             broadcaster=Broadcaster(self.bot, session_factory, rate=10_000),
             game=self.game,
+            media=media,
+            content_path=content_path or PROJECT_ROOT / "content" / "quest.yaml",
             throttle_interval=throttle_interval,
         )
         self._update_ids = count(1)
@@ -150,6 +155,10 @@ class Harness:
 
     def last_text(self, to: int) -> str:
         return self.texts(to)[-1]
+
+    def documents(self, to: int | None = None) -> list[SendDocument]:
+        calls = [c for c in self.session.calls if isinstance(c, SendDocument)]
+        return [c for c in calls if to is None or c.chat_id == to]
 
     def photos(self, to: int | None = None) -> list[SendPhoto]:
         calls = [c for c in self.session.calls if isinstance(c, SendPhoto)]

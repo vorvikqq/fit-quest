@@ -21,7 +21,8 @@ from bot.db import repo
 from bot.db.models import Attempt, GameState, Phase
 
 Action = Literal[
-    "open_reg", "close_reg", "start_quest", "close_in", "close_quest", "publish_results", "broadcast"
+    "open_reg", "close_reg", "start_quest", "close_in", "close_quest", "publish_results", "broadcast",
+    "reset_all",
 ]
 
 
@@ -75,6 +76,11 @@ def check_publish_results(state: GameState) -> None:
         raise PhaseConflict(f"Публікація можлива лише після /close_quest (зараз етап {state.phase}).")
 
 
+def check_reset_all(state: GameState) -> None:
+    if state.phase == Phase.RUNNING:
+        raise PhaseConflict("Під час гри скидати не можна: спочатку /close_quest.")
+
+
 def preflight(action: Action, state: GameState, *, todo_count: int = 0, force: bool = False) -> None:
     """Перевірка без змін: кидає `PhaseConflict`, якщо дія зараз неможлива."""
     if action == "open_reg":
@@ -89,6 +95,8 @@ def preflight(action: Action, state: GameState, *, todo_count: int = 0, force: b
         check_close_quest(state)
     elif action == "publish_results":
         check_publish_results(state)
+    elif action == "reset_all":
+        check_reset_all(state)
     # broadcast: умов щодо етапу немає
 
 
@@ -141,3 +149,10 @@ async def publish_results(session: AsyncSession) -> GameState:
     state = await repo.get_game_state(session, lock=True)
     check_publish_results(state)
     return await repo.update_game_state(session, phase=Phase.RESULTS.value)
+
+
+async def reset_all(session: AsyncSession) -> None:
+    """`/reset_all`: стирає учасників і спроби, етап → DRAFT (генеральний прогін, NFR-8)."""
+    state = await repo.get_game_state(session, lock=True)
+    check_reset_all(state)
+    await repo.reset_event(session)
