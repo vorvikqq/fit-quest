@@ -1,6 +1,11 @@
 services:
   db:
     image: postgres:16
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"   # ротація: журнал не заповнить диск сервера
+        max-file: "5"
     restart: unless-stopped
     environment:
       POSTGRES_USER: quest
@@ -18,6 +23,7 @@ services:
 
   bot:
     build: .
+    logging: *logging
     restart: unless-stopped
     env_file: .env
     environment:
