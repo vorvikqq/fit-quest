@@ -12,15 +12,17 @@ DRAFT ─open_reg─▶ REGISTRATION ─start_quest─▶ RUNNING ─close_quest
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db import repo
-from bot.db.models import GameState, Phase
+from bot.db.models import Attempt, GameState, Phase
 
-Action = Literal["open_reg", "close_reg", "start_quest"]
+Action = Literal[
+    "open_reg", "close_reg", "start_quest", "close_in", "close_quest", "publish_results", "broadcast"
+]
 
 
 class PhaseConflict(Exception):
@@ -57,14 +59,37 @@ def check_start_quest(state: GameState, todo_count: int, force: bool) -> None:
         )
 
 
+def check_running(state: GameState, what: str) -> None:
+    if state.phase != Phase.RUNNING:
+        raise PhaseConflict(f"{what} можливо лише під час гри (зараз етап {state.phase}).")
+
+
+def check_close_quest(state: GameState) -> None:
+    check_running(state, "Закрити квест")
+
+
+def check_publish_results(state: GameState) -> None:
+    if state.phase == Phase.RESULTS:
+        raise PhaseConflict("Результати вже опубліковано.")
+    if state.phase != Phase.CLOSED:
+        raise PhaseConflict(f"Публікація можлива лише після /close_quest (зараз етап {state.phase}).")
+
+
 def preflight(action: Action, state: GameState, *, todo_count: int = 0, force: bool = False) -> None:
     """Перевірка без змін: кидає `PhaseConflict`, якщо дія зараз неможлива."""
     if action == "open_reg":
         check_open_registration(state)
     elif action == "close_reg":
         check_close_registration(state)
-    else:
+    elif action == "start_quest":
         check_start_quest(state, todo_count, force)
+    elif action == "close_in":
+        check_running(state, "Призначити час закриття")
+    elif action == "close_quest":
+        check_close_quest(state)
+    elif action == "publish_results":
+        check_publish_results(state)
+    # broadcast: умов щодо етапу немає
 
 
 async def open_registration(session: AsyncSession) -> GameState:
@@ -90,3 +115,29 @@ async def start_quest(
     return await repo.update_game_state(
         session, phase=Phase.RUNNING.value, started_at=now, content_hash=content_hash
     )
+
+
+async def set_closes_in(session: AsyncSession, *, minutes: int, now: datetime) -> GameState:
+    """`/close_in`: плановий час закриття (для «лишилось N хв»); сам квест автоматично не закривається."""
+    state = await repo.get_game_state(session, lock=True)
+    check_running(state, "Призначити час закриття")
+    return await repo.update_game_state(session, closes_at=now + timedelta(minutes=minutes))
+
+
+async def close_quest(session: AsyncSession, *, now: datetime) -> list[Attempt]:
+    """`/close_quest` (DESIGN §6.7): етап → CLOSED, реєстрація закрита, незавершені спроби → CLOSED_UNFINISHED.
+
+    Повертає закриті спроби, щоб викликач скасував таймери й розіслав повідомлення.
+    """
+    state = await repo.get_game_state(session, lock=True)
+    check_close_quest(state)
+    await repo.update_game_state(
+        session, phase=Phase.CLOSED.value, registration_open=False, closed_at=now
+    )
+    return list(await repo.close_unfinished(session))
+
+
+async def publish_results(session: AsyncSession) -> GameState:
+    state = await repo.get_game_state(session, lock=True)
+    check_publish_results(state)
+    return await repo.update_game_state(session, phase=Phase.RESULTS.value)

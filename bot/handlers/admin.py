@@ -1,7 +1,8 @@
 """Адмін-команди (DESIGN §10). Доступ лише для ADMIN_IDS (AdminOnlyMiddleware).
 
-Кожен перехід етапу просить підтвердження кнопками ✅/❌ (§3.1, FR-24). Підтвердження
-перевіряє умови повторно під блокуванням, тож застаріла чи подвійна кнопка нічого не зламає.
+Кожен перехід етапу й кожна масова розсилка просять підтвердження кнопками ✅/❌
+(§3.1, FR-24). Підтвердження перевіряє умови повторно під блокуванням, тож застаріла чи
+подвійна кнопка нічого не зламає. Усі масові відправки йдуть у фоні через Broadcaster.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Awaitable
 from datetime import UTC, datetime
 
 from aiogram import Bot, F, Router
@@ -25,6 +27,8 @@ from bot.keyboards import AdminAct, Confirm, admin_panel_kb, confirm_kb, start_g
 from bot.middlewares import AdminOnlyMiddleware
 from bot.services import phases
 from bot.services.broadcast import Broadcaster
+from bot.services.game import GameService
+from bot.services.results import render_header, render_review
 
 log = logging.getLogger(__name__)
 
@@ -35,8 +39,24 @@ router.callback_query.middleware(AdminOnlyMiddleware())
 
 # Фонові розсилки: тримаємо посилання, щоб задачі не збирав GC.
 background_tasks: set[asyncio.Task] = set()
+# Текст `/broadcast`, що чекає підтвердження: admin_id → HTML. У пам'яті: після рестарту
+# просто просимо надіслати команду ще раз.
+pending_broadcasts: dict[int, str] = {}
 
 SETCODE_MIN, SETCODE_MAX = 2, 64
+CLOSE_IN_MIN, CLOSE_IN_MAX = 1, 600
+
+
+def _spawn(coro: Awaitable[None]) -> None:
+    async def runner() -> None:
+        try:
+            await coro
+        except Exception:  # noqa: BLE001
+            log.exception("Фонова задача адміна впала")
+
+    task = asyncio.create_task(runner())
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
 
 
 # ---------------------------------------------------------------------------
@@ -106,9 +126,12 @@ async def _ask_confirm(
     bot: Bot,
     chat_id: int,
     action: phases.Action,
-    force: bool,
     session_factory: async_sessionmaker[AsyncSession],
     report: Report,
+    *,
+    force: bool = False,
+    arg: int = 0,
+    preview: str = "",
 ) -> None:
     todo_count = len(report.todos)
     async with session_factory() as session:
@@ -121,8 +144,16 @@ async def _ask_confirm(
         return
     await bot.send_message(
         chat_id,
-        texts.confirm(action, counters.registered, todo_count, force, state.access_code),
-        reply_markup=confirm_kb(action, force),
+        texts.confirm(
+            action,
+            state=state,
+            counters=counters,
+            todo_count=todo_count,
+            force=force,
+            arg=arg,
+            preview=preview,
+        ),
+        reply_markup=confirm_kb(action, force, arg),
     )
 
 
@@ -133,7 +164,7 @@ async def cmd_open_reg(
     session_factory: async_sessionmaker[AsyncSession],
     content_report: Report,
 ) -> None:
-    await _ask_confirm(bot, message.chat.id, "open_reg", False, session_factory, content_report)
+    await _ask_confirm(bot, message.chat.id, "open_reg", session_factory, content_report)
 
 
 @router.message(Command("close_reg"))
@@ -143,7 +174,7 @@ async def cmd_close_reg(
     session_factory: async_sessionmaker[AsyncSession],
     content_report: Report,
 ) -> None:
-    await _ask_confirm(bot, message.chat.id, "close_reg", False, session_factory, content_report)
+    await _ask_confirm(bot, message.chat.id, "close_reg", session_factory, content_report)
 
 
 @router.message(Command("start_quest"))
@@ -159,11 +190,70 @@ async def cmd_start_quest(
         await message.answer(texts.ADMIN_USAGE_START_QUEST)
         return
     await _ask_confirm(
-        bot, message.chat.id, "start_quest", arg == "force", session_factory, content_report
+        bot, message.chat.id, "start_quest", session_factory, content_report, force=arg == "force"
     )
 
 
-@router.callback_query(AdminAct.filter(F.action.in_({"open_reg", "close_reg", "start_quest"})))
+@router.message(Command("close_in"))
+async def cmd_close_in(
+    message: Message,
+    command: CommandObject,
+    bot: Bot,
+    session_factory: async_sessionmaker[AsyncSession],
+    content_report: Report,
+) -> None:
+    raw = (command.args or "").strip()
+    if not raw.isdigit() or not CLOSE_IN_MIN <= int(raw) <= CLOSE_IN_MAX:
+        await message.answer(texts.ADMIN_USAGE_CLOSE_IN)
+        return
+    await _ask_confirm(
+        bot, message.chat.id, "close_in", session_factory, content_report, arg=int(raw)
+    )
+
+
+@router.message(Command("close_quest"))
+async def cmd_close_quest(
+    message: Message,
+    bot: Bot,
+    session_factory: async_sessionmaker[AsyncSession],
+    content_report: Report,
+) -> None:
+    await _ask_confirm(bot, message.chat.id, "close_quest", session_factory, content_report)
+
+
+@router.message(Command("publish_results"))
+async def cmd_publish_results(
+    message: Message,
+    bot: Bot,
+    session_factory: async_sessionmaker[AsyncSession],
+    content_report: Report,
+) -> None:
+    await _ask_confirm(bot, message.chat.id, "publish_results", session_factory, content_report)
+
+
+@router.message(Command("broadcast"))
+async def cmd_broadcast(
+    message: Message,
+    bot: Bot,
+    session_factory: async_sessionmaker[AsyncSession],
+    content_report: Report,
+) -> None:
+    # `html_text` зберігає форматування, яке адмін зробив у Telegram (жирний, посилання),
+    # а набрані вручну `<` `&` екранує: Telegram завжди прийме такий текст.
+    parts = (message.html_text or "").split(None, 1)
+    raw = parts[1].strip() if len(parts) == 2 else ""
+    if not raw:
+        await message.answer(texts.ADMIN_USAGE_BROADCAST)
+        return
+    pending_broadcasts[message.chat.id] = raw
+    await _ask_confirm(
+        bot, message.chat.id, "broadcast", session_factory, content_report, preview=raw
+    )
+
+
+@router.callback_query(
+    AdminAct.filter(F.action.in_({"open_reg", "close_reg", "start_quest", "close_quest", "publish_results"}))
+)
 async def on_panel_action(
     callback: CallbackQuery,
     callback_data: AdminAct,
@@ -176,7 +266,6 @@ async def on_panel_action(
         bot,
         callback.from_user.id,
         callback_data.action,  # type: ignore[arg-type]
-        False,
         session_factory,
         content_report,
     )
@@ -196,16 +285,54 @@ async def _finish_message(callback: CallbackQuery, text: str) -> None:
     await callback.bot.send_message(callback.from_user.id, text)  # type: ignore[union-attr]
 
 
-async def _broadcast_quest_started(
-    broadcaster: Broadcaster, recipients: list[int], content: Content, admin_chat_id: int
+async def _broadcast_and_report(
+    broadcaster: Broadcaster, admin_chat_id: int, recipients: list[int], text: str, markup=None
 ) -> None:
-    try:
-        result = await broadcaster.send(
-            recipients, content.messages["quest_started"], reply_markup=start_game_kb(content)
+    result = await broadcaster.send(recipients, text, reply_markup=markup)
+    await broadcaster.bot.send_message(admin_chat_id, texts.broadcast_done(result))
+
+
+async def _notify_closed(
+    game: GameService,
+    broadcaster: Broadcaster,
+    admin_chat_id: int,
+    closed: list,
+    items: list[tuple[int, str]],
+) -> None:
+    for attempt in closed:  # прибираємо кнопки в поточних питаннях (з розрахунком на ліміти)
+        await broadcaster.acquire()
+        await game.messenger.remove_keyboard(attempt.tg_id, attempt.q_message_id)
+    result = await broadcaster.send_personal(items)
+    await broadcaster.bot.send_message(admin_chat_id, texts.broadcast_done(result))
+
+
+async def _publish_results(
+    game: GameService,
+    broadcaster: Broadcaster,
+    session_factory: async_sessionmaker[AsyncSession],
+    admin_chat_id: int,
+) -> None:
+    async with session_factory() as session:
+        rows = await repo.leaderboard(session)
+        ids = [r.attempt_id for r in rows]
+        attempts = {a.id: a for a in await repo.list_attempts_by_ids(session, ids)}
+        answers = await repo.answers_by_attempt(session, ids)
+
+    items: list[tuple[int, str]] = []
+    for row in rows:
+        attempt = attempts[row.attempt_id]
+        items.append(
+            (
+                row.tg_id,
+                render_header(game.content, row.place, len(rows), attempt.score, len(attempt.plan)),
+            )
         )
-        await broadcaster.bot.send_message(admin_chat_id, texts.broadcast_done(result))
-    except Exception:  # noqa: BLE001
-        log.exception("Розсилка «квест стартував» впала")
+        items.extend((row.tg_id, chunk) for chunk in render_review(game.index, attempt, answers[attempt.id]))
+
+    result = await broadcaster.send_personal(items)
+    async with session_factory.begin() as session:
+        await repo.mark_results_sent(session, ids)
+    await broadcaster.bot.send_message(admin_chat_id, texts.broadcast_done(result))
 
 
 @router.callback_query(Confirm.filter())
@@ -217,15 +344,21 @@ async def on_confirm(
     content_report: Report,
     content_hash: str,
     broadcaster: Broadcaster,
+    game: GameService,
 ) -> None:
     await callback.answer()
+    admin_id = callback.from_user.id
     if not callback_data.yes:
+        pending_broadcasts.pop(admin_id, None)
         await _finish_message(callback, texts.CANCELLED)
         return
 
     action = callback_data.action
+    now = datetime.now(UTC)
+    followup: Awaitable[None] | None = None
+    closed: list = []
+    notified = 0
     try:
-        recipients: list[int] = []
         async with session_factory.begin() as session:
             if action == "open_reg":
                 await phases.open_registration(session)
@@ -235,23 +368,57 @@ async def on_confirm(
                 await phases.start_quest(
                     session,
                     content_hash=content_hash,
-                    now=datetime.now(UTC),
+                    now=now,
                     todo_count=len(content_report.todos),
                     force=callback_data.force,
                 )
                 recipients = await repo.list_registered_ids(session)
+                notified = len(recipients)
+                followup = _broadcast_and_report(
+                    broadcaster,
+                    admin_id,
+                    recipients,
+                    content.messages["quest_started"],
+                    start_game_kb(content),
+                )
+            elif action == "close_in":
+                await phases.set_closes_in(session, minutes=callback_data.arg, now=now)
+                recipients = await repo.list_registered_ids(session)
+                notified = len(recipients)
+                followup = _broadcast_and_report(
+                    broadcaster,
+                    admin_id,
+                    recipients,
+                    content.messages["closing_soon"].format(minutes=callback_data.arg),
+                )
+            elif action == "close_quest":
+                closed = await phases.close_quest(session, now=now)
+                notified = len(closed)
+            elif action == "publish_results":
+                await phases.publish_results(session)
+                notified = len(await repo.leaderboard(session))
+                followup = _publish_results(game, broadcaster, session_factory, admin_id)
+            elif action == "broadcast":
+                text = pending_broadcasts.pop(admin_id, None)
+                if text is None:
+                    raise phases.PhaseConflict(texts.NOTHING_TO_BROADCAST)
+                recipients = await repo.list_registered_ids(session)
+                notified = len(recipients)
+                followup = _broadcast_and_report(broadcaster, admin_id, recipients, text)
             else:
                 return
     except phases.PhaseConflict as exc:
         await _finish_message(callback, texts.conflict(str(exc)))
         return
 
-    await _finish_message(callback, texts.done(action, len(recipients)))
+    if action == "close_quest":
+        # Після коміту: `close_notifications` відкриває власні сесії, а в одній транзакції
+        # з `close_quest` вони чекали б на блокування тих самих рядків.
+        game.cancel_timers(closed)
+        items = await game.close_notifications(closed)
+        followup = _notify_closed(game, broadcaster, admin_id, closed, items)
 
-    if action == "start_quest":
-        # Розсилка в фоні: підтвердження не чекає 8+ секунд на 200 учасників.
-        task = asyncio.create_task(
-            _broadcast_quest_started(broadcaster, recipients, content, callback.from_user.id)
-        )
-        background_tasks.add(task)
-        task.add_done_callback(background_tasks.discard)
+    await _finish_message(callback, texts.done(action, notified))
+    if followup is not None:
+        # Розсилка в фоні: підтвердження не чекає десятки секунд на 200 учасників.
+        _spawn(followup)

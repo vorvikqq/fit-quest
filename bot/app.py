@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from bot.content.loader import Report
 from bot.content.models import Content
-from bot.handlers import admin, registration
+from bot.handlers import admin, after_game, registration
 from bot.handlers import game as game_handlers
 from bot.middlewares import ThrottlingMiddleware, UserUpsertMiddleware
 from bot.services.broadcast import Broadcaster
@@ -47,8 +47,9 @@ def build_dispatcher(
     dp.message.outer_middleware(upsert)
     dp.callback_query.outer_middleware(upsert)
 
-    # Порядок роутерів важливий: admin → game → registration (з fallback наприкінці).
+    # Порядок роутерів важливий: admin → game → after_game → registration (з fallback наприкінці).
     dp.include_router(admin.router)
     dp.include_router(game_handlers.router)
+    dp.include_router(after_game.router)
     dp.include_router(registration.router)
     return dp

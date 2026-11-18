@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from bot.app import build_dispatcher
 from bot.config import PROJECT_ROOT
 from bot.content.loader import load_and_validate, validate_content
-from bot.handlers import admin, registration
+from bot.handlers import admin, after_game, registration
 from bot.handlers import game as game_handlers
 from bot.services.broadcast import Broadcaster
 from bot.services.game import GameService
@@ -79,7 +79,7 @@ class Harness:
             self.content, self.report = content, validate_content(content, PROJECT_ROOT / "content")
         # Роутери модульні (по одному на процес), а aiogram не дозволяє підключити їх до
         # другого Dispatcher. У проді Dispatcher один; тестам потрібен свіжий на кожен тест.
-        for router in (admin.router, game_handlers.router, registration.router):
+        for router in (admin.router, game_handlers.router, after_game.router, registration.router):
             router._parent_router = None
         media = MediaService(session_factory, PROJECT_ROOT / "content")
         self.game = GameService(

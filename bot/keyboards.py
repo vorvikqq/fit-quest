@@ -10,6 +10,7 @@ from bot.content.models import Content
 from bot.db.models import COURSES, UserStatus
 
 START_GAME_DATA = "game:start"  # кнопка «Почати квест»
+FEEDBACK_SKIP_DATA = "fb:skip"
 
 
 class GoCb(CallbackData, prefix="go"):
@@ -40,6 +41,7 @@ class AdminAct(CallbackData, prefix="act"):
 class Confirm(CallbackData, prefix="cf"):
     action: str
     force: bool = False
+    arg: int = 0  # напр., хвилини для /close_in
     yes: bool
 
 
@@ -82,6 +84,12 @@ def answer_kb(buttons: tuple[tuple[str, int], ...], cursor: int) -> InlineKeyboa
     return kb.adjust(len(buttons)).as_markup()
 
 
+def skip_feedback_kb(content: Content) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text=content.messages["btn_skip"], callback_data=FEEDBACK_SKIP_DATA)
+    return kb.as_markup()
+
+
 def admin_panel_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="🔓 Відкрити реєстрацію", callback_data=AdminAct(action="open_reg"))
@@ -91,8 +99,8 @@ def admin_panel_kb() -> InlineKeyboardMarkup:
     return kb.adjust(2).as_markup()
 
 
-def confirm_kb(action: str, force: bool = False) -> InlineKeyboardMarkup:
+def confirm_kb(action: str, force: bool = False, arg: int = 0) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Так", callback_data=Confirm(action=action, force=force, yes=True))
-    kb.button(text="❌ Ні", callback_data=Confirm(action=action, force=force, yes=False))
+    kb.button(text="✅ Так", callback_data=Confirm(action=action, force=force, arg=arg, yes=True))
+    kb.button(text="❌ Ні", callback_data=Confirm(action=action, force=force, arg=arg, yes=False))
     return kb.adjust(2).as_markup()

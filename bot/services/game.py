@@ -277,11 +277,41 @@ class GameService:
         return True
 
     # ------------------------------------------------------------------
-    # Фініш (розширюється в §6.6)
+    # Фініш (§6.6) і закриття (§6.7)
     # ------------------------------------------------------------------
 
+    async def _promo_texts(self, attempt: Attempt) -> list[str]:
+        """Промокод Hillel + партнери. Лише один раз на спробу (`promo_sent`, FR-19)."""
+        async with self.session_factory.begin() as session:
+            first = await repo.mark_promo_sent(session, attempt.id)
+        if not first:
+            return []
+        return [self.content.meta.promo.text, self.content.messages["partners"]]
+
     async def _finish(self, attempt: Attempt) -> None:
-        text = self.content.messages["finished"].format(
-            score=attempt.score, total=len(attempt.plan)
+        messages = self.content.messages
+        await self.messenger.send_text(
+            attempt.tg_id, messages["finished"].format(score=attempt.score, total=len(attempt.plan))
         )
-        await self.messenger.send_text(attempt.tg_id, text)
+        for text in await self._promo_texts(attempt):
+            await self.messenger.send_text(attempt.tg_id, text)
+        await self.messenger.send_feedback_prompt(attempt.tg_id, messages["ask_feedback"])
+
+    def cancel_timers(self, attempts) -> None:
+        for attempt in attempts:
+            self.scheduler.cancel(attempt.id)
+
+    async def close_notifications(self, attempts) -> list[tuple[int, str]]:
+        """Повідомлення тим, кого закрили посеред гри: «квест закрито» + промокод (FR-19, FR-22)."""
+        items: list[tuple[int, str]] = []
+        for attempt in attempts:
+            items.append(
+                (
+                    attempt.tg_id,
+                    self.content.messages["quest_closed_unfinished"].format(
+                        answered=attempt.cursor, total=len(attempt.plan), score=attempt.score
+                    ),
+                )
+            )
+            items.extend((attempt.tg_id, text) for text in await self._promo_texts(attempt))
+        return items

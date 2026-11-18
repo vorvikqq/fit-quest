@@ -339,10 +339,88 @@ async def mark_promo_sent(session: AsyncSession, attempt_id: int) -> bool:
     return result.rowcount == 1
 
 
-async def set_feedback(session: AsyncSession, tg_id: int, feedback: str) -> None:
-    await session.execute(
-        update(Attempt).where(Attempt.tg_id == tg_id).values(feedback=feedback[:300])
+FEEDBACK_MAX = 300
+FEEDBACK_SKIPPED = ""  # «Пропустити»: порожній рядок відрізняється від NULL («ще не питали»)
+
+
+async def set_feedback(session: AsyncSession, tg_id: int, feedback: str) -> bool:
+    """Зберігає відгук (до 300 символів) один раз. `False`, якщо вже є відповідь чи пропуск."""
+    result = await session.execute(
+        update(Attempt)
+        .where(Attempt.tg_id == tg_id, Attempt.feedback.is_(None))
+        .values(feedback=feedback[:FEEDBACK_MAX])
     )
+    return result.rowcount == 1
+
+
+@dataclass(frozen=True)
+class RankRow:
+    place: int
+    tg_id: int
+    attempt_id: int
+    full_name: str
+    username: str | None
+    status: str
+    score: int
+    total_time_ms: int
+    finished_at: datetime | None
+
+
+async def leaderboard(session: AsyncSession, limit: int | None = None) -> list[RankRow]:
+    """Рейтинг (FR-15, FR-16, FR-22).
+
+    1) більше балів; 2) менший сумарний час; 3) раніший час завершення (недопройдені — після
+    завершених); далі `tg_id` для стабільності. Адміни й виключені в рейтинг не потрапляють.
+    """
+    stmt = (
+        select(Attempt, User)
+        .join(User, User.tg_id == Attempt.tg_id)
+        .where(
+            User.excluded.is_(False),
+            User.is_admin.is_(False),
+            Attempt.status.in_([AttemptStatus.FINISHED.value, AttemptStatus.CLOSED_UNFINISHED.value]),
+        )
+        .order_by(
+            Attempt.score.desc(),
+            Attempt.total_time_ms.asc(),
+            Attempt.finished_at.asc().nulls_last(),
+            Attempt.tg_id.asc(),
+        )
+    )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    rows = (await session.execute(stmt)).all()
+    return [
+        RankRow(
+            place=i,
+            tg_id=a.tg_id,
+            attempt_id=a.id,
+            full_name=u.full_name or u.tg_name,
+            username=u.username,
+            status=a.status,
+            score=a.score,
+            total_time_ms=a.total_time_ms,
+            finished_at=a.finished_at,
+        )
+        for i, (a, u) in enumerate(rows, start=1)
+    ]
+
+
+async def list_attempts_by_ids(session: AsyncSession, ids: Sequence[int]) -> list[Attempt]:
+    stmt = select(Attempt).where(Attempt.id.in_(ids)).execution_options(populate_existing=True)
+    return list((await session.execute(stmt)).scalars())
+
+
+async def answers_by_attempt(session: AsyncSession, ids: Sequence[int]) -> dict[int, dict[str, Answer]]:
+    stmt = select(Answer).where(Answer.attempt_id.in_(ids))
+    result: dict[int, dict[str, Answer]] = {i: {} for i in ids}
+    for answer in (await session.execute(stmt)).scalars():
+        result[answer.attempt_id][answer.qid] = answer
+    return result
+
+
+async def mark_results_sent(session: AsyncSession, ids: Sequence[int]) -> None:
+    await session.execute(update(Attempt).where(Attempt.id.in_(ids)).values(results_sent=True))
 
 
 @dataclass(frozen=True)

@@ -378,8 +378,7 @@ async def test_full_playthrough_with_cards_between_sections(env):
     # питань надіслано рівно стільки, скільки в плані
     assert [q[3] for q in env.messenger.questions(U)] == list(range(TOTAL))
 
-    final = env.messenger.of("text", U)[-1][2]
-    assert f"<b>{TOTAL} з {TOTAL}</b>" in final
+    assert any(f"<b>{TOTAL} з {TOTAL}</b>" in e[2] for e in env.messenger.of("text", U))
 
 
 async def test_playthrough_with_wrong_answers_scores_zero(env):

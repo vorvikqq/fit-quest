@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from bot.content.models import Content
 from bot.db import repo
-from bot.keyboards import answer_kb, card_kb
+from bot.keyboards import answer_kb, card_kb, skip_feedback_kb
 from bot.services.media import MediaService
 from bot.services.render import QuestionView
 
@@ -40,6 +40,8 @@ class Messenger(Protocol):
     async def send_card(self, tg_id: int, text: str, cursor: int) -> int | None: ...
 
     async def send_question(self, tg_id: int, view: QuestionView, cursor: int) -> int | None: ...
+
+    async def send_feedback_prompt(self, tg_id: int, text: str) -> int | None: ...
 
     async def close_question(
         self, tg_id: int, message_id: int | None, view: QuestionView, suffix: str
@@ -99,6 +101,13 @@ class TelegramMessenger:
 
     async def send_card(self, tg_id: int, text: str, cursor: int) -> int | None:
         markup = card_kb(self.content, cursor)
+        msg = await self._call(
+            tg_id, lambda: self.bot.send_message(tg_id, text, reply_markup=markup)
+        )
+        return msg.message_id if msg else None
+
+    async def send_feedback_prompt(self, tg_id: int, text: str) -> int | None:
+        markup = skip_feedback_kb(self.content)
         msg = await self._call(
             tg_id, lambda: self.bot.send_message(tg_id, text, reply_markup=markup)
         )

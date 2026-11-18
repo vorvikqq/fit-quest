@@ -117,6 +117,10 @@ class FakeMessenger:
         self.events.append(("question", tg_id, view, cursor))
         return self._id(tg_id)
 
+    async def send_feedback_prompt(self, tg_id: int, text: str) -> int | None:
+        self.events.append(("feedback_prompt", tg_id, text))
+        return self._id(tg_id)
+
     async def close_question(self, tg_id: int, message_id, view: QuestionView, suffix: str) -> None:
         self.events.append(("close", tg_id, message_id, suffix))
 

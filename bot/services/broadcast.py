@@ -84,15 +84,33 @@ class Broadcaster:
         log.error("Вичерпано спроби для %s", tg_id)
         return "failed"
 
+    async def acquire(self) -> None:
+        """Місце в черзі для іншого масового виклику Telegram (наприклад, прибрати клавіатури)."""
+        await self._wait_turn()
+
+    async def send_personal(
+        self,
+        items: Iterable[tuple[int, str]],
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> BroadcastResult:
+        """Різні тексти різним адресатам; повідомлення одному адресату йдуть у порядку списку."""
+        result = BroadcastResult()
+        blocked: set[int] = set()  # після Forbidden решту повідомлень цьому адресату не шлемо
+        for tg_id, text in items:
+            if tg_id in blocked:
+                result.blocked += 1
+                continue
+            outcome = await self._send_one(tg_id, text, reply_markup)
+            if outcome == "blocked":
+                blocked.add(tg_id)
+            setattr(result, outcome, getattr(result, outcome) + 1)
+        log.info("Розсилка: %s", result)
+        return result
+
     async def send(
         self,
         recipients: Iterable[int],
         text: str,
         reply_markup: InlineKeyboardMarkup | None = None,
     ) -> BroadcastResult:
-        result = BroadcastResult()
-        for tg_id in recipients:
-            outcome = await self._send_one(tg_id, text, reply_markup)
-            setattr(result, outcome, getattr(result, outcome) + 1)
-        log.info("Розсилка: %s", result)
-        return result
+        return await self.send_personal(((tg_id, text) for tg_id in recipients), reply_markup)
