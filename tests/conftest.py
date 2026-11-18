@@ -60,7 +60,7 @@ def migrated_db() -> str:
 
 @pytest_asyncio.fixture
 async def engine(migrated_db: str) -> AsyncIterator[AsyncEngine]:
-    eng = create_async_engine(migrated_db, poolclass=NullPool)
+    eng = create_async_engine(migrated_db, pool_size=20, max_overflow=20)
     async with eng.begin() as conn:
         tables = ", ".join(t.name for t in Base.metadata.sorted_tables)
         await conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))

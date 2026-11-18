@@ -252,13 +252,13 @@ async def test_registered_user_cannot_restart_registration(h, session_factory):
     assert h.texts(U) == [h.content.messages["registered_waiting"]]
 
 
-async def test_start_button_is_a_stub_alert(h, session_factory):
-    await set_state(session_factory, Phase.RUNNING)
+async def test_start_button_before_quest_started_shows_alert(h, session_factory):
+    await set_state(session_factory)  # REGISTRATION: квест ще не стартував
     await register(h)
     h.clear()
     await h.press(U, START_GAME_DATA)
     (answer,) = [c for c in h.session.calls if isinstance(c, AnswerCallbackQuery)]
-    assert answer.text == h.content.messages["game_not_ready"] and answer.show_alert
+    assert answer.text == h.content.messages["quest_not_started"] and answer.show_alert
 
 
 # --- текст без стану та middleware --------------------------------------

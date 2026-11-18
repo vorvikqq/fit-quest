@@ -98,11 +98,13 @@ async def test_admin_only_blocks_non_admin():
 
 async def test_throttling_end_to_end_answers_dropped_button(session_factory):
     h = Harness(session_factory, throttle_interval=60)
+    async with session_factory.begin() as s:
+        await repo.ensure_game_state(s)
     await h.press(7, START_GAME_DATA)
     await h.press(7, START_GAME_DATA)  # відкинуто, але спінер знято
     answers = [c for c in h.session.calls if isinstance(c, AnswerCallbackQuery)]
     assert len(answers) == 2
-    assert [a.text for a in answers] == [h.content.messages["game_not_ready"], None]
+    assert answers[1].text is None  # друге натискання: тиха відповідь без обробки
 
 
 # --- Broadcaster --------------------------------------------------------

@@ -9,7 +9,20 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.content.models import Content
 from bot.db.models import COURSES, UserStatus
 
-START_GAME_DATA = "go:start"
+START_GAME_DATA = "game:start"  # кнопка «Почати квест»
+
+
+class GoCb(CallbackData, prefix="go"):
+    """Кнопка «Почати раунд» на картці (DESIGN §6.2)."""
+
+    cursor: int
+
+
+class AnsCb(CallbackData, prefix="a"):
+    """Відповідь на питання: `a:{cursor}:{btn}` (DESIGN §6.4)."""
+
+    cursor: int
+    btn: int
 
 
 class StatusCb(CallbackData, prefix="st"):
@@ -53,6 +66,20 @@ def start_game_kb(content: Content) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=content.messages["btn_start_quest"], callback_data=START_GAME_DATA)
     return kb.as_markup()
+
+
+def card_kb(content: Content, cursor: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text=content.messages["btn_start_round"], callback_data=GoCb(cursor=cursor))
+    return kb.as_markup()
+
+
+def answer_kb(buttons: tuple[tuple[str, int], ...], cursor: int) -> InlineKeyboardMarkup:
+    """Усі кнопки в один ряд: для choice це лише літери, для binary — короткі мітки."""
+    kb = InlineKeyboardBuilder()
+    for label, btn in buttons:
+        kb.button(text=label, callback_data=AnsCb(cursor=cursor, btn=btn))
+    return kb.adjust(len(buttons)).as_markup()
 
 
 def admin_panel_kb() -> InlineKeyboardMarkup:

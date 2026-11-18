@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import html
-import re
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
@@ -20,6 +18,7 @@ import yaml
 from pydantic import ValidationError
 
 from bot.content.models import Content, Question
+from bot.content.textutil import html_problems, plain, tg_len
 
 CAPTION_LIMIT = 1024  # підпис до фото
 MESSAGE_LIMIT = 4096  # звичайне повідомлення
@@ -46,7 +45,13 @@ REQUIRED_MESSAGES = frozenset(
         "course_4",
         "course_master",
         "btn_start_quest",
-        "game_not_ready",
+        "btn_start_round",
+        "question_header",
+        "round_stats",
+        "answer_stale",
+        "time_left",
+        "quest_not_started",
+        "quest_closed_late",
         "consent_note",
         "registered_waiting",
         "quest_started",
@@ -63,7 +68,11 @@ REQUIRED_MESSAGES = frozenset(
     }
 )
 
-_TAG_RE = re.compile(r"<[^>]+>")
+# Запас на шапку «Раунд 3/5 · Питання 4/10 · ⏱ 15 с» (+ роздільники), яку бот додає до питання.
+HEADER_RESERVE = 40
+# Запас на дописку «✅ Відповідь прийнято» (render.SUFFIX_RESERVE).
+SUFFIX_RESERVE = 30
+RESERVE = HEADER_RESERVE + SUFFIX_RESERVE
 
 
 class ContentError(Exception):
@@ -134,29 +143,21 @@ class Report:
 # ---------------------------------------------------------------------------
 
 
-def _plain(text: str) -> str:
-    """Те, що Telegram порахує в ліміті: без HTML-тегів, сутності розкриті."""
-    return html.unescape(_TAG_RE.sub("", text))
-
-
-def _tg_len(text: str) -> int:
-    """Довжина в UTF-16 code units (так Telegram рахує ліміти; емодзі = 2)."""
-    return len(text.encode("utf-16-le")) // 2
-
-
 def _is_todo_text(text: str | None) -> bool:
-    return bool(text) and _plain(text).strip().upper().startswith("TODO")
+    return bool(text) and plain(text).strip().upper().startswith("TODO")
 
 
 def rendered_length(question: Question, question_type: str) -> int:
-    """Довжина тексту питання разом з варіантами `A) …`, як їх покаже бот (§6.3)."""
-    parts = [_plain(question.text)]
+    """Довжина тексту питання разом з варіантами `A) …`, як їх покаже бот (§6.3).
+
+    Текст питання містить HTML (теги не рахуються), варіанти бот екранує, тож вони
+    рахуються як є. Шапку раунду додає `HEADER_RESERVE` у перевірці лімітів.
+    """
+    parts = [plain(question.text)]
     if question_type == "choice" and question.options:
         letters = "ABCD"
-        parts.extend(
-            f"{letters[i]}) {_plain(opt)}" for i, opt in enumerate(question.options[:CHOICE_MAX])
-        )
-    return _tg_len("\n".join(parts))
+        parts.extend(f"{letters[i]}) {opt}" for i, opt in enumerate(question.options[:CHOICE_MAX]))
+    return tg_len("\n".join(parts))
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +261,7 @@ def _check_question(question_type: str, q: Question, root: Path, report: Report)
         report.add("error", q.id, f"файл картинки не знайдено: {q.image}")
 
     # --- ліміти Telegram ----------------------------------------------
-    length = rendered_length(q, question_type)
+    length = rendered_length(q, question_type) + RESERVE
     if length > MESSAGE_LIMIT:
         report.add("error", q.id, f"{length} символів, ліміт повідомлення {MESSAGE_LIMIT}")
     elif q.image is not None and length > CAPTION_LIMIT:
@@ -275,6 +276,8 @@ def _check_question(question_type: str, q: Question, root: Path, report: Report)
     # --- незаповнене (TODO) -------------------------------------------
     # Одне питання — один запис, навіть якщо причин кілька.
     reasons: list[str] = []
+    for problem in html_problems(q.text):
+        report.add("error", q.id, f"HTML у тексті питання: {problem}")
     if q.todo and q.todo.strip():
         reasons.append(q.todo.strip())
     if q.correct is None:

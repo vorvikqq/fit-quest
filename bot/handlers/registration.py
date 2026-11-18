@@ -24,6 +24,7 @@ from bot.db import repo
 from bot.db.models import COURSES, GameState, Phase, User, UserStatus
 from bot.keyboards import CourseCb, StatusCb, course_kb, start_game_kb, status_kb
 from bot.services import phases
+from bot.services.game import GameService
 from bot.services.ratelimit import SlidingWindowLimiter
 
 router = Router(name="registration")
@@ -146,11 +147,17 @@ async def cmd_start(
     content: Content,
     session_factory: async_sessionmaker[AsyncSession],
     code_limiter: SlidingWindowLimiter,
+    game: GameService,
 ) -> None:
-    # Зареєстрований повертається туди, де зупинився (гру додамо разом з game.py).
+    # Зареєстрований повертається туди, де зупинився (§3.2).
     if user.registered_at is not None:
         await state.clear()
-        await _show_registered(bot, user.tg_id, content, await _game_state(session_factory))
+        async with session_factory() as session:
+            has_attempt = await repo.get_attempt_for_user(session, user.tg_id) is not None
+        if has_attempt:
+            await game.start_or_resume(user.tg_id)
+        else:
+            await _show_registered(bot, user.tg_id, content, await _game_state(session_factory))
         return
     await _begin(
         bot, user, (command.args or "").strip(), state, content, session_factory, code_limiter

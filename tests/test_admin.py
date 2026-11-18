@@ -5,7 +5,7 @@ import pytest
 from bot import texts
 from bot.db import repo
 from bot.db.models import Phase
-from bot.keyboards import AdminAct, Confirm
+from bot.keyboards import START_GAME_DATA, AdminAct, Confirm
 from tests.harness import ADMIN_ID, Harness
 
 U = 5001
@@ -225,7 +225,7 @@ async def test_forced_start_broadcasts_to_registered_only(h, session_factory):
     started = h.content.messages["quest_started"]
     assert h.texts(11) == [started] and h.texts(12) == [started]
     assert h.texts(13) == [] and h.texts(14) == []  # заблокований і незареєстрований не отримують
-    assert h.button_data(11) == ["go:start"]
+    assert h.button_data(11) == [START_GAME_DATA]
     assert "надіслано 2 з 2" in h.last_text(ADMIN_ID)
 
 

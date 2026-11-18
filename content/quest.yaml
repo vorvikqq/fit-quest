@@ -42,7 +42,13 @@ messages:
   course_4: "4 курс"
   course_master: "Магістратура"
   btn_start_quest: "▶️ Почати квест"
-  game_not_ready: "🚧 Гра ще в розробці, скоро буде!"   # тимчасова заглушка, прибрати разом із handlers/game.py
+  btn_start_round: "▶️ Почати раунд"
+  question_header: "Раунд {round}/{rounds} · Питання {number}/{total} · ⏱ {seconds} с"
+  round_stats: "Питань: {count} · ⏱ {seconds} с на кожне"
+  answer_stale: "Відповідь уже зараховано"
+  time_left: "⏳ До закриття квесту лишилось приблизно {minutes} хв"
+  quest_not_started: "⏳ Квест ще не стартував. Чекаємо сигнал від ведучого!"
+  quest_closed_late: "🔒 Квест уже закрито. Результати оголосимо в Zoom!"
   consent_note: |
     ℹ️ Твоє ім'я з'явиться в таблиці результатів, а організатори можуть написати переможцям у Telegram, щоб передати призи.
   registered_waiting: "✅ Ти в грі! Чекаємо, поки ведучий дасть старт 🚀"

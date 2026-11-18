@@ -17,6 +17,10 @@ from bot.content.loader import ContentError, file_sha256, load_and_validate
 from bot.db import repo
 from bot.db.session import make_engine, make_session_factory
 from bot.services.broadcast import Broadcaster
+from bot.services.game import GameService
+from bot.services.media import MediaService
+from bot.services.messenger import TelegramMessenger
+from bot.services.timers import recover, run_watchdog
 
 log = logging.getLogger("bot")
 
@@ -67,6 +71,10 @@ async def main() -> None:
         log.warning("ADMIN_IDS порожній: адмін-команди недоступні нікому")
 
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    media = MediaService(session_factory, settings.content_root)
+    game = GameService(
+        session_factory, content, TelegramMessenger(bot, content, media, session_factory)
+    )
     dp = build_dispatcher(
         content=content,
         content_report=content_report,
@@ -74,12 +82,19 @@ async def main() -> None:
         session_factory=session_factory,
         admin_ids=settings.admin_ids,
         broadcaster=Broadcaster(bot, session_factory),
+        game=game,
     )
 
     try:
         me = await bot.get_me()
         log.info("Бот запущено: @%s", me.username)
-        await dp.start_polling(bot)
+        await recover(game)  # §7: прострочені питання закрити, живі — перепланувати
+        watchdog = asyncio.create_task(run_watchdog(game))
+        try:
+            await dp.start_polling(bot)
+        finally:
+            watchdog.cancel()
+            game.scheduler.cancel_all()
     except TelegramUnauthorizedError:
         log.error("Telegram відхилив BOT_TOKEN: перевір значення в .env")
         sys.exit(1)

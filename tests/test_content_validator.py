@@ -9,6 +9,7 @@ import yaml
 from bot.config import PROJECT_ROOT
 from bot.content.loader import (
     CAPTION_LIMIT,
+    RESERVE,
     MESSAGE_LIMIT,
     REQUIRED_MESSAGES,
     ContentError,
@@ -194,7 +195,7 @@ def test_caption_limit_boundary_with_image(tmp_path: Path):
             q["options"] = ["x", "y"]
             q["correct"] = 0
             # рендер: text + "\nA) x\nB) y" = len(text) + 10
-            q["text"] = "ы" * (total - 10)
+            q["text"] = "ы" * (total - 10 - RESERVE)
 
         return make(mutate)
 
@@ -216,6 +217,22 @@ def test_no_warning_over_1024_without_image():
 def test_message_limit_is_error():
     report = check(make(lambda d: q_binary(d).update(text="а" * (MESSAGE_LIMIT + 1))))
     assert any("ліміт повідомлення" in m for m in messages_of(report.errors))
+
+
+def test_html_in_question_text_must_be_valid_for_telegram():
+    for bad in ("2 < 3", "<script>x</script>", "<b>не закрито", "a</i>"):
+        report = check(make(lambda d, b=bad: q_binary(d).update(text=b)))
+        assert any("HTML у тексті" in m for m in messages_of(report.errors)), bad
+    ok = check(make(lambda d: q_binary(d).update(text="<b>жирний</b> і <a href='x'>лінк</a> &lt; ok")))
+    assert ok.issues == []
+
+
+def test_choice_options_are_counted_verbatim_not_as_html():
+    def mutate(d):
+        q_choice(d)["options"] = ["<<", "#include <cmath>", ">>"]
+        q_choice(d)["correct"] = 0
+
+    assert check(make(mutate)).issues == []  # варіанти екрануються ботом, тож `<` у них не помилка
 
 
 def test_html_tags_do_not_count():

@@ -8,9 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from bot.content.loader import Report
 from bot.content.models import Content
-from bot.handlers import admin, game, registration
+from bot.handlers import admin, registration
+from bot.handlers import game as game_handlers
 from bot.middlewares import ThrottlingMiddleware, UserUpsertMiddleware
 from bot.services.broadcast import Broadcaster
+from bot.services.game import GameService
 from bot.services.ratelimit import SlidingWindowLimiter
 
 CODE_ATTEMPTS_PER_MINUTE = 5  # DESIGN §13
@@ -24,6 +26,7 @@ def build_dispatcher(
     session_factory: async_sessionmaker[AsyncSession],
     admin_ids: list[int],
     broadcaster: Broadcaster,
+    game: GameService,
     throttle_interval: float = 0.5,
 ) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
@@ -35,6 +38,7 @@ def build_dispatcher(
     dp["session_factory"] = session_factory
     dp["admin_ids"] = admin_ids
     dp["broadcaster"] = broadcaster
+    dp["game"] = game
     dp["code_limiter"] = SlidingWindowLimiter(CODE_ATTEMPTS_PER_MINUTE, 60)
 
     # Порядок: throttling (дешево, відсікає спам) → user-upsert → хендлери.
@@ -45,6 +49,6 @@ def build_dispatcher(
 
     # Порядок роутерів важливий: admin → game → registration (з fallback наприкінці).
     dp.include_router(admin.router)
-    dp.include_router(game.router)
+    dp.include_router(game_handlers.router)
     dp.include_router(registration.router)
     return dp
