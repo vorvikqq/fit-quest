@@ -58,6 +58,21 @@ async def cmd_top(
     await message.answer(texts.top(rows, game.content.question_count, limit))
 
 
+# --- /board ----------------------------------------------------------------
+
+
+@router.message(Command("board"))
+async def cmd_board(message: Message, board_url: str, board_token: str) -> None:
+    if not board_token:
+        await message.answer("Табло вимкнено: задай BOARD_TOKEN у .env і перезапусти бота.")
+        return
+    await message.answer(
+        f"📺 Живе табло для Zoom:\n{board_url}/board?token={board_token}\n\n"
+        "Посилання містить секретний токен: не публікуй його в чаті Zoom.",
+        disable_web_page_preview=True,
+    )
+
+
 # --- /export ---------------------------------------------------------------
 
 

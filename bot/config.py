@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     access_code: str = ""  # початкове значення, далі /setcode
     board_token: str = ""
     web_port: int = 8080
+    # Зовнішня адреса табло для команди /board, напр. http://203.0.113.5:8080 або https://board.example.com
+    board_public_url: str = ""
     tz: str = "Europe/Kyiv"
     log_level: str = "INFO"
     content_path: Path = PROJECT_ROOT / "content" / "quest.yaml"
@@ -35,6 +37,10 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [int(part) for part in value.split(",") if part.strip()]
         return value
+
+    @property
+    def board_url(self) -> str:
+        return self.board_public_url.rstrip("/") or f"http://localhost:{self.web_port}"
 
     @property
     def content_root(self) -> Path:

@@ -73,6 +73,8 @@ class Harness:
         throttle_interval: float = 0.0,  # у тестах кнопки тиснуться підряд
         content=None,
         content_path=None,
+        board_url="http://board.test",
+        board_token="board-secret",
     ):
         self.session = RecordingSession()
         self.bot = Bot("123456:TEST", session=self.session)
@@ -100,6 +102,8 @@ class Harness:
             game=self.game,
             media=media,
             content_path=content_path or PROJECT_ROOT / "content" / "quest.yaml",
+            board_url=board_url,
+            board_token=board_token,
             throttle_interval=throttle_interval,
         )
         self._update_ids = count(1)

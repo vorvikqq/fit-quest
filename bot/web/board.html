@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Табло квесту</title>
+<style>
+  :root {
+    --bg: #0b1020; --panel: #151c33; --panel-2: #1b2442; --text: #f2f5ff; --muted: #8f9bc0;
+    --accent: #5b8cff; --gold: #ffd166; --silver: #cfd6e6; --bronze: #e39a6b; --ok: #4ade80; --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: radial-gradient(1200px 700px at 80% -10%, #1b2a66 0%, var(--bg) 60%) no-repeat, var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    padding: 2.2vh 3vw; display: flex; flex-direction: column; gap: 2.4vh;
+  }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 2vw; }
+  h1 { margin: 0; font-size: clamp(28px, 4.4vw, 72px); letter-spacing: .01em; }
+  .chip {
+    font-size: clamp(16px, 1.8vw, 30px); padding: .35em .9em; border-radius: 999px;
+    background: var(--panel-2); color: var(--muted); white-space: nowrap;
+  }
+  .chip.live { color: #06240f; background: var(--ok); font-weight: 700; }
+  .chip.wait { color: #2a1d00; background: var(--warn); font-weight: 700; }
+  .counters { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2vw; }
+  .counter { background: var(--panel); border-radius: 1.4vw; padding: 2vh 2vw; text-align: center; }
+  .counter .num { font-size: clamp(48px, 9vw, 160px); font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  .counter .label { margin-top: .6vh; font-size: clamp(16px, 2vw, 34px); color: var(--muted); }
+  .timer { text-align: center; font-size: clamp(24px, 3.6vw, 60px); font-variant-numeric: tabular-nums; }
+  .timer b { color: var(--warn); }
+  .timer.hidden { display: none; }
+  main { flex: 1; min-height: 0; background: var(--panel); border-radius: 1.4vw; padding: 2vh 2.4vw; display: flex; flex-direction: column; }
+  h2 { margin: 0 0 1.2vh; font-size: clamp(22px, 2.8vw, 46px); color: var(--muted); font-weight: 600; }
+  ol { list-style: none; margin: 0; padding: 0; display: grid; gap: .8vh; overflow: hidden; }
+  li { display: grid; grid-template-columns: 2.2em 1fr auto auto; align-items: baseline; gap: 1.4vw;
+       font-size: clamp(22px, 3.2vw, 54px); padding: .5vh 1vw; border-radius: .8vw; background: var(--panel-2); }
+  li .place { font-weight: 800; color: var(--muted); text-align: center; }
+  li:nth-child(1) .place { color: var(--gold); } li:nth-child(2) .place { color: var(--silver); } li:nth-child(3) .place { color: var(--bronze); }
+  li .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  li .score { font-weight: 800; font-variant-numeric: tabular-nums; }
+  li .time { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 4.5em; text-align: right; }
+  .empty { color: var(--muted); font-size: clamp(20px, 2.6vw, 42px); margin: auto; text-align: center; }
+  .offline { position: fixed; right: 1.2vw; bottom: 1.2vh; background: #5b1220; color: #ffd7dd; padding: .4em .9em; border-radius: 8px; font-size: 18px; display: none; }
+  .offline.show { display: block; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">IT-квест</h1>
+  <span class="chip" id="phase">…</span>
+</header>
+<section class="counters">
+  <div class="counter"><div class="num" id="registered">0</div><div class="label">зареєстровано</div></div>
+  <div class="counter"><div class="num" id="playing">0</div><div class="label">грають зараз</div></div>
+  <div class="counter"><div class="num" id="finished">0</div><div class="label">завершили</div></div>
+</section>
+<div class="timer hidden" id="timer">До закриття: <b id="left">--:--</b></div>
+<main>
+  <h2>Топ-10</h2>
+  <ol id="top"></ol>
+  <div class="empty" id="empty">Поки що ніхто не завершив квест</div>
+</main>
+<div class="offline" id="offline">немає зв'язку, показую останні дані</div>
+<script>
+(function () {
+  "use strict";
+  var params = new URLSearchParams(location.search);
+  var token = params.get("token") || "";
+  var PHASES = {
+    DRAFT: ["Підготовка", ""], REGISTRATION: ["Реєстрація", "wait"], RUNNING: ["Квест іде", "live"],
+    CLOSED: ["Квест закрито", ""], RESULTS: ["Результати", ""]
+  };
+  var $ = function (id) { return document.getElementById(id); };
+  var clockOffset = 0;   // різниця між годинником сервера й браузера
+  var closesAt = null;
+
+  function setText(id, value) { var el = $(id); if (el.textContent !== String(value)) el.textContent = value; }
+
+  function render(d) {
+    setText("title", d.title);
+    document.title = d.title;
+    var phase = PHASES[d.phase] || [d.phase, ""];
+    var chip = $("phase"); chip.textContent = phase[0]; chip.className = "chip " + phase[1];
+    setText("registered", d.registered); setText("playing", d.playing); setText("finished", d.finished);
+
+    var list = $("top"); list.textContent = "";
+    d.top.forEach(function (row) {
+      var li = document.createElement("li");
+      [["place", row.place], ["name", row.name], ["score", row.score + "/" + d.total_questions], ["time", row.time]]
+        .forEach(function (cell) {
+          var span = document.createElement("span"); span.className = cell[0];
+          span.textContent = cell[1];            // textContent: імена учасників ніколи не стають HTML
+          li.appendChild(span);
+        });
+      list.appendChild(li);
+    });
+    $("empty").style.display = d.top.length ? "none" : "block";
+
+    clockOffset = Date.parse(d.server_time) - Date.now();
+    closesAt = d.closes_at && d.phase === "RUNNING" ? Date.parse(d.closes_at) : null;
+    tick();
+  }
+
+  function tick() {
+    var box = $("timer");
+    if (closesAt === null) { box.classList.add("hidden"); return; }
+    var left = Math.max(0, Math.round((closesAt - (Date.now() + clockOffset)) / 1000));
+    box.classList.remove("hidden");
+    var m = Math.floor(left / 60), s = left % 60;
+    setText("left", (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s);
+  }
+
+  function poll() {
+    fetch("/api/board?token=" + encodeURIComponent(token), { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (d) { render(d); $("offline").classList.remove("show"); })
+      .catch(function () { $("offline").classList.add("show"); });
+  }
+
+  poll();
+  setInterval(poll, 3000);
+  setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>

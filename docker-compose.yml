@@ -23,6 +23,10 @@ services:
     environment:
       # Усередині compose БД завжди за іменем сервісу, незалежно від .env
       DATABASE_URL: postgresql+asyncpg://quest:quest@db:5432/quest
+    ports:
+      # Живе табло. За замовчуванням лише localhost (за nginx/Caddy);
+      # для прямого доступу задай BOARD_BIND=0.0.0.0 у .env і користуйся довгим BOARD_TOKEN.
+      - "${BOARD_BIND:-127.0.0.1}:${WEB_PORT:-8080}:${WEB_PORT:-8080}"
     depends_on:
       db:
         condition: service_healthy

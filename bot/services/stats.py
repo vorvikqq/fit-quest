@@ -73,6 +73,9 @@ async def collect_stats(session: AsyncSession, hardest_limit: int = 3) -> Stats:
         elif status == AttemptStatus.CLOSED_UNFINISHED.value:
             stats.closed_unfinished = count
 
+    if hardest_limit <= 0:  # табло не потребує найскладніших питань: економимо запит
+        return stats
+
     correct_count = func.sum(case((Answer.is_correct.is_(True), 1), else_=0).cast(Integer))
     rate = correct_count * 1.0 / func.count()
     rows = await session.execute(

@@ -32,6 +32,8 @@ def build_dispatcher(
     game: GameService,
     media: MediaService,
     content_path: Path,
+    board_url: str = "",
+    board_token: str = "",
     throttle_interval: float = 0.5,
 ) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
@@ -46,6 +48,8 @@ def build_dispatcher(
     dp["game"] = game
     dp["media"] = media
     dp["content_path"] = content_path
+    dp["board_url"] = board_url
+    dp["board_token"] = board_token
     dp["code_limiter"] = SlidingWindowLimiter(CODE_ATTEMPTS_PER_MINUTE, 60)
 
     # Порядок: throttling (дешево, відсікає спам) → user-upsert → хендлери.

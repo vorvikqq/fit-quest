@@ -21,6 +21,7 @@ from bot.services.game import GameService
 from bot.services.media import MediaService
 from bot.services.messenger import TelegramMessenger
 from bot.services.timers import recover, run_watchdog
+from bot.web.server import BoardData, create_app, start_board
 
 log = logging.getLogger("bot")
 
@@ -85,6 +86,8 @@ async def main() -> None:
         game=game,
         media=media,
         content_path=settings.content_path,
+        board_url=settings.board_url,
+        board_token=settings.board_token,
     )
 
     try:
@@ -92,11 +95,20 @@ async def main() -> None:
         log.info("Бот запущено: @%s", me.username)
         await recover(game)  # §7: прострочені питання закрити, живі — перепланувати
         watchdog = asyncio.create_task(run_watchdog(game))
+        board_runner = None
+        if settings.board_token:
+            # game.content, а не `content`: табло бачить контент після /reload_content
+            board = BoardData(session_factory, lambda: game.content)
+            board_runner = await start_board(create_app(board, settings.board_token), settings.web_port)
+        else:
+            log.warning("BOARD_TOKEN порожній: живе табло вимкнено")
         try:
             await dp.start_polling(bot)
         finally:
             watchdog.cancel()
             game.scheduler.cancel_all()
+            if board_runner is not None:
+                await board_runner.cleanup()
     except TelegramUnauthorizedError:
         log.error("Telegram відхилив BOT_TOKEN: перевір значення в .env")
         sys.exit(1)
