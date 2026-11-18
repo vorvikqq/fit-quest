@@ -117,9 +117,12 @@ async def test_full_game_through_handlers_ends_with_result(h, session_factory):
     await advance_to_cursor(h, session_factory, TOTAL)
     a = await attempt(session_factory)
     assert a.status == AttemptStatus.FINISHED and a.score == TOTAL
-    assert f"<b>{TOTAL} з {TOTAL}</b>" in h.last_text(U)
+    assert any(f"<b>{TOTAL} з {TOTAL}</b>" in t for t in h.texts(U))
     h.clear()
-    await h.send(U, "дякую")  # після завершення вже не «обери кнопкою»
+    await h.send(U, "дякую")  # після завершення текст — це відгук, а не «обери кнопкою»
+    assert h.texts(U) == [h.content.messages["feedback_thanks"]]
+    h.clear()
+    await h.send(U, "ще")  # відгук приймається лише раз
     assert h.sent(U) == []
 
 
