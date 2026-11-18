@@ -26,3 +26,9 @@ docker compose logs -f bot
 docker compose exec bot python -m bot.content.loader   # валідація контенту
 pytest
 ```
+
+DB-тести (`tests/test_repo.py`, `test_start_handler.py`) потребують Postgres на `127.0.0.1:55432` (або `TEST_DATABASE_URL`); без нього вони пропускаються. **На початку сесії схема `public` у цій БД видаляється**, тож не вказуй робочу базу:
+```
+docker run -d --name fq-test-pg -e POSTGRES_USER=quest -e POSTGRES_PASSWORD=quest -e POSTGRES_DB=quest -p 127.0.0.1:55432:5432 postgres:16
+```
+Нова міграція: `DATABASE_URL=… alembic revision --autogenerate -m "…"` (тест `test_migration_matches_models` ловить розбіжність моделей і міграцій).

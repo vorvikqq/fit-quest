@@ -1,0 +1,34 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: quest
+      POSTGRES_PASSWORD: quest
+      POSTGRES_DB: quest
+      TZ: ${TZ:-Europe/Kyiv}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quest -d quest"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    # Порт назовні не відкриваємо: БД доступна лише боту в мережі compose.
+
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Усередині compose БД завжди за іменем сервісу, незалежно від .env
+      DATABASE_URL: postgresql+asyncpg://quest:quest@db:5432/quest
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Контент можна правити без перезбирання образу (NFR-5); /reload_content або рестарт.
+      - ./content:/app/content:ro
+
+volumes:
+  pgdata:
