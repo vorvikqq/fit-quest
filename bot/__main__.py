@@ -6,16 +6,17 @@ import asyncio
 import logging
 import sys
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramUnauthorizedError
 
+from bot.app import build_dispatcher
 from bot.config import Settings, get_settings
-from bot.content.loader import ContentError, load_and_validate
+from bot.content.loader import ContentError, file_sha256, load_and_validate
 from bot.db import repo
 from bot.db.session import make_engine, make_session_factory
-from bot.handlers import registration
+from bot.services.broadcast import Broadcaster
 
 log = logging.getLogger("bot")
 
@@ -60,15 +61,20 @@ async def main() -> None:
     async with session_factory.begin() as session:
         state = await repo.ensure_game_state(session, settings.access_code)
     log.info("Етап квесту: %s", state.phase)
+    if not state.access_code.strip():
+        log.warning("Кодове слово не задано: ніхто не зможе зареєструватись (/setcode або ACCESS_CODE)")
+    if not settings.admin_ids:
+        log.warning("ADMIN_IDS порожній: адмін-команди недоступні нікому")
 
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = Dispatcher()
-    # Залежності, які aiogram підставляє в хендлери за іменем параметра.
-    dp["content"] = content
-    dp["content_report"] = content_report
-    dp["session_factory"] = session_factory
-    dp["admin_ids"] = settings.admin_ids
-    dp.include_router(registration.router)
+    dp = build_dispatcher(
+        content=content,
+        content_report=content_report,
+        content_hash=file_sha256(settings.content_path),
+        session_factory=session_factory,
+        admin_ids=settings.admin_ids,
+        broadcaster=Broadcaster(bot, session_factory),
+    )
 
     try:
         me = await bot.get_me()

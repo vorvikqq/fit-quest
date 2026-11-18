@@ -11,10 +11,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,12 +36,17 @@ async def ensure_game_state(session: AsyncSession, access_code: str = "") -> Gam
     return await get_game_state(session)
 
 
-async def get_game_state(session: AsyncSession) -> GameState:
-    return (await session.execute(select(GameState).where(GameState.id == 1))).scalar_one()
+async def get_game_state(session: AsyncSession, lock: bool = False) -> GameState:
+    """`lock=True` → `SELECT … FOR UPDATE`: переходи етапів не конкурують між собою."""
+    stmt = select(GameState).where(GameState.id == 1).execution_options(populate_existing=True)
+    if lock:
+        stmt = stmt.with_for_update()
+    return (await session.execute(stmt)).scalar_one()
 
 
 async def update_game_state(session: AsyncSession, **fields: Any) -> GameState:
-    await session.execute(update(GameState).where(GameState.id == 1).values(**fields))
+    if fields:
+        await session.execute(update(GameState).where(GameState.id == 1).values(**fields))
     return await get_game_state(session)
 
 
@@ -95,12 +101,14 @@ async def register_user(
     status: str,
     course: str | None,
     now: datetime,
-) -> None:
-    await session.execute(
+) -> bool:
+    """Завершує реєстрацію. `False`, якщо користувач уже зареєстрований (FR-6)."""
+    result = await session.execute(
         update(User)
-        .where(User.tg_id == tg_id)
+        .where(User.tg_id == tg_id, User.registered_at.is_(None))
         .values(full_name=full_name, status=status, course=course, registered_at=now)
     )
+    return result.rowcount == 1
 
 
 async def set_user_flag(session: AsyncSession, tg_id: int, **flags: bool) -> bool:
@@ -334,6 +342,32 @@ async def mark_promo_sent(session: AsyncSession, attempt_id: int) -> bool:
 async def set_feedback(session: AsyncSession, tg_id: int, feedback: str) -> None:
     await session.execute(
         update(Attempt).where(Attempt.tg_id == tg_id).values(feedback=feedback[:300])
+    )
+
+
+@dataclass(frozen=True)
+class Counters:
+    registered: int
+    in_progress: int  # ROUND_INTRO + QUESTION
+    finished: int
+    closed_unfinished: int
+
+
+async def get_counters(session: AsyncSession) -> Counters:
+    """Лічильники для /admin (повний /stats — окремо, FR-26)."""
+    registered = (
+        await session.execute(select(func.count()).where(User.registered_at.is_not(None)))
+    ).scalar_one()
+    rows = (
+        await session.execute(select(Attempt.status, func.count()).group_by(Attempt.status))
+    ).all()
+    by_status = {status: n for status, n in rows}
+    return Counters(
+        registered=registered,
+        in_progress=by_status.get(AttemptStatus.ROUND_INTRO.value, 0)
+        + by_status.get(AttemptStatus.QUESTION.value, 0),
+        finished=by_status.get(AttemptStatus.FINISHED.value, 0),
+        closed_unfinished=by_status.get(AttemptStatus.CLOSED_UNFINISHED.value, 0),
     )
 
 

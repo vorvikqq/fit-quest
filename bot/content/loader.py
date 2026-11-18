@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import re
 import sys
@@ -33,6 +34,19 @@ REQUIRED_MESSAGES = frozenset(
         "ask_name",
         "ask_status",
         "ask_course",
+        "invalid_name",
+        "too_many_attempts",
+        "status_fit_student",
+        "status_applicant",
+        "status_other_student",
+        "status_other",
+        "course_1",
+        "course_2",
+        "course_3",
+        "course_4",
+        "course_master",
+        "btn_start_quest",
+        "game_not_ready",
         "consent_note",
         "registered_waiting",
         "quest_started",
@@ -297,6 +311,11 @@ def load_content(path: Path) -> Content:
     except yaml.YAMLError as exc:
         raise ContentError(f"некоректний YAML у {path}: {exc}") from exc
     return parse_content(raw)
+
+
+def file_sha256(path: Path) -> str:
+    """Хеш quest.yaml для `game_state.content_hash` (захист від правок посеред гри)."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def load_and_validate(path: Path) -> tuple[Content, Report]:
