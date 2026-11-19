@@ -16,6 +16,7 @@ from aiogram.exceptions import (
     TelegramAPIError,
     TelegramBadRequest,
     TelegramForbiddenError,
+    TelegramNetworkError,
     TelegramRetryAfter,
 )
 from aiogram.types import FSInputFile, InlineKeyboardMarkup
@@ -29,6 +30,7 @@ from bot.services.render import QuestionView
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
+NETWORK_RETRY_DELAY = 1.0  # с; пауза між повторами наростає: 1, 2, 3…
 
 
 class Messenger(Protocol):
@@ -73,7 +75,7 @@ class TelegramMessenger:
     async def _call(
         self, tg_id: int, make: Callable[[], Awaitable[T]], *, reraise_bad_request: bool = False
     ) -> T | None:
-        for _ in range(self._retries + 1):
+        for attempt in range(1, self._retries + 2):
             try:
                 return await make()
             except TelegramBadRequest as exc:
@@ -88,6 +90,11 @@ class TelegramMessenger:
                 async with self._session_factory.begin() as session:
                     await repo.set_user_flag(session, tg_id, blocked_bot=True)
                 return None
+            except TelegramNetworkError as exc:
+                # Таймаут чи обрив мережі: повідомлення не можна просто губити (учасник лишився б без
+                # питання). Повторюємо з наростаючою паузою; дубль (якщо Telegram усе ж доставив) безпечний.
+                log.warning("Мережева помилка для %s (спроба %d): %s", tg_id, attempt, exc)
+                await self._sleep(NETWORK_RETRY_DELAY * attempt)
             except TelegramAPIError as exc:
                 log.error("Telegram помилка для %s: %s", tg_id, exc)
                 return None

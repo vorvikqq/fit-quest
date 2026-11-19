@@ -8,6 +8,7 @@ import sys
 
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramUnauthorizedError
 
@@ -24,6 +25,7 @@ from bot.services.timers import recover, run_watchdog
 from bot.web.server import BoardData, create_app, start_board
 
 log = logging.getLogger("bot")
+REQUEST_TIMEOUT = 30.0  # с, HTTP-запит до Telegram
 
 
 def load_content_or_exit(settings: Settings):
@@ -72,8 +74,11 @@ async def main() -> None:
         log.warning("ADMIN_IDS порожній: адмін-команди недоступні нікому")
 
     # Без прев'ю посилань: у тексті призів є лінк на LinkedIn, а картка з прев'ю захаращує чат.
+    # Таймаут запиту 30 с замість 60 с за замовчуванням: зависле повідомлення не тримає учасника
+    # хвилину (а messenger сам повторює запит при мережевій помилці).
     bot = Bot(
         settings.bot_token,
+        session=AiohttpSession(timeout=REQUEST_TIMEOUT),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True),
     )
     media = MediaService(session_factory, settings.content_root)

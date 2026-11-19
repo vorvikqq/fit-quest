@@ -238,6 +238,7 @@ gunzip -c backup-….sql.gz | docker compose exec -T db psql -U quest quest
 | Табло відповідає `403` | Невірний/відсутній `token` у посиланні: візьміть свіже через `/board` |
 | Табло не відкривається ззовні | `BOARD_BIND=0.0.0.0`, відкритий порт у Hetzner Cloud Firewall, `docker compose ps` показує `0.0.0.0:8080->8080` |
 | `db` не стає healthy | `docker compose logs db`; перевірте вільне місце (`df -h`) |
+| У логу `Request timeout error`, картинки вантажаться хвилинами, `/warmup` пише «Не вдалося завантажити» | Слабкий канал до Telegram з машини, де працює бот (VPN, провайдер, Wi-Fi). Перевірка: `docker compose run --rm --no-deps -v "$PWD/scripts:/app/scripts:ro" bot python scripts/telegram_check.py` (getMe має бути < 0,5 с, завантаження 200 КБ < 3 с). Бот при таймауті повторює запит 3 рази, але лікує це лише нормальний канал: розгортайте на сервері, а не з домашнього інтернету |
 | Питання приходять із запізненням | Перевірте навантаження `docker stats`; Telegram може обмежувати: у логах шукайте `RetryAfter` |
 
 ## 12. Навантажувальний тест

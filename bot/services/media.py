@@ -26,6 +26,7 @@ class WarmupResult:
     uploaded: list[str] = field(default_factory=list)
     cached: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
+    failed: list[str] = field(default_factory=list)  # Telegram не прийняв/не відповів
 
 
 class MediaService:
@@ -88,7 +89,11 @@ class MediaService:
             elif await self.cached_file_id(rel) is not None:
                 result.cached.append(rel)
             else:
-                msg = await bot.send_photo(chat_id, FSInputFile(self.path(rel)), caption=rel)
+                try:
+                    msg = await bot.send_photo(chat_id, FSInputFile(self.path(rel)), caption=rel)
+                except TelegramAPIError:
+                    result.failed.append(rel)  # мережа/ліміти: решту картинок усе одно пробуємо
+                    continue
                 await self.remember(rel, msg.photo[-1].file_id)
                 result.uploaded.append(rel)
                 if cleanup:

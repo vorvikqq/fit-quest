@@ -193,6 +193,12 @@ async def cmd_warmup(message: Message, bot: Bot, media: MediaService, game: Game
     text = f"🔥 Кеш картинок: завантажено {len(result.uploaded)}, уже було {len(result.cached)}."
     if result.missing:
         text += "\n⚠️ Немає файлів: " + ", ".join(result.missing)
+    if result.failed:
+        text += (
+            f"\n⚠️ Не вдалося завантажити в Telegram ({len(result.failed)}): "
+            + ", ".join(result.failed)
+            + "\nПеревір з'єднання сервера з Telegram і повтори /warmup."
+        )
     await message.answer(text)
 
 

@@ -45,6 +45,7 @@ background_tasks: set[asyncio.Task] = set()
 pending_broadcasts: dict[int, str] = {}
 
 SETCODE_MIN, SETCODE_MAX = 2, 64
+WARMUP_TIMEOUT = 25.0  # с: скільки старт квесту максимум чекає на прогрів картинок
 CLOSE_IN_MIN, CLOSE_IN_MAX = 1, 600
 
 
@@ -374,12 +375,19 @@ async def on_confirm(
     if action == "start_quest" and callback_data.yes:
         # Прогріваємо кеш картинок ДО старту: інакше перші учасники, що дійшли до фото, самі
         # завантажують файли на Telegram (хвилини очікування). Збій прогріву старт не блокує.
+        # Загальний ліміт часу: якщо канал до Telegram повільний, старт не чекає хвилинами
+        # (раніше один завислий запит затримав старт на 60 с). Недогріте докачається за потреби.
         try:
-            warm = await media.warmup(callback.bot, admin_id, game.content, cleanup=True)  # type: ignore[arg-type]
+            warm = await asyncio.wait_for(
+                media.warmup(callback.bot, admin_id, game.content, cleanup=True),  # type: ignore[arg-type]
+                timeout=WARMUP_TIMEOUT,
+            )
             if warm.uploaded:
                 log.info("Прогрів перед стартом: завантажено %d картинок", len(warm.uploaded))
             if warm.missing:
                 log.error("Прогрів: немає файлів картинок: %s", ", ".join(warm.missing))
+        except TimeoutError:
+            log.warning("Прогрів не вклався в %s с: старт триває, картинки докачаються за потреби", WARMUP_TIMEOUT)
         except Exception:  # noqa: BLE001
             log.exception("Прогрів картинок перед стартом не вдався (старт триває)")
 

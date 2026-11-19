@@ -8,7 +8,7 @@ import random
 
 import pytest
 from aiogram.exceptions import TelegramNetworkError
-from aiogram.methods import DeleteMessage, SendPhoto
+from aiogram.methods import DeleteMessage, SendMessage, SendPhoto
 from aiogram.types import FSInputFile
 
 from bot.db import repo
@@ -61,24 +61,30 @@ async def test_concurrent_first_sends_upload_the_file_only_once(h):
 
 async def test_each_image_has_its_own_lock(h):
     """Різні картинки завантажуються незалежно, а не по черзі."""
-    slow_uploads(h, 0.1)
+    slow_uploads(h, 0.5)
     other = QuestionView(text="x", image="images/r5_prompt_01.png", split=False, buttons=(("A", 0),))
     started = asyncio.get_running_loop().time()
     await asyncio.gather(
         h.game.messenger.send_question(1, VIEW, 0), h.game.messenger.send_question(2, other, 0)
     )
-    assert asyncio.get_running_loop().time() - started < 0.19  # паралельно, а не 0,1 + 0,1
+    # паралельно ≈ 0,5 с; по черзі було б ≥ 1,0 с
+    assert asyncio.get_running_loop().time() - started < 0.9
 
 
 async def test_failed_upload_does_not_poison_the_lock(h):
-    """Якщо перше завантаження впало (мережа), наступний учасник спробує сам."""
+    """Якщо завантаження зовсім не вдалось (мережа), наступний учасник спробує сам."""
+
+    async def no_sleep(seconds: float) -> None:
+        pass
+
+    h.game.messenger._sleep = no_sleep  # без реальних пауз між повторами
     original = h.session.make_request
     calls = {"n": 0}
 
     async def flaky(bot, method, timeout=None):
         if isinstance(method, SendPhoto) and isinstance(method.photo, FSInputFile):
             calls["n"] += 1
-            if calls["n"] == 1:
+            if calls["n"] <= 4:  # перша спроба й усі 3 повтори першого учасника
                 raise TelegramNetworkError(method, "timeout")
         return await original(bot, method, timeout)
 
@@ -193,3 +199,81 @@ async def test_next_question_does_not_wait_for_slow_edit(session_factory):
     assert len(messenger.of("close", 101)) == 1
     game.scheduler.cancel_all()
     assert attempt.cursor == 0
+
+
+# --- мережеві збої Telegram (таймаут запиту) ------------------------------
+
+TEXT_VIEW = QuestionView(text="Питання", image=None, split=False, buttons=(("A", 0), ("B", 1)))
+
+
+def fail_sends(h: Harness, times: int, kind=SendMessage):
+    """Перші `times` викликів `kind` падають мережевою помилкою (як `Request timeout error`)."""
+    original = h.session.make_request
+    state = {"left": times}
+
+    async def make_request(bot, method, timeout=None):
+        if isinstance(method, kind) and state["left"] > 0:
+            state["left"] -= 1
+            raise TelegramNetworkError(method, "Request timeout error")
+        return await original(bot, method, timeout)
+
+    h.session.make_request = make_request
+
+
+async def test_network_error_is_retried_not_lost(h):
+    """Раніше таймаут тихо губив питання: учасник лишався без повідомлення."""
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    h.game.messenger._sleep = fake_sleep
+    fail_sends(h, 2)
+    message_id = await h.game.messenger.send_question(1, TEXT_VIEW, 0)
+    assert message_id is not None
+    assert sleeps == [1.0, 2.0]  # пауза між повторами наростає
+
+
+async def test_network_error_gives_up_after_retries(h):
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    h.game.messenger._sleep = fake_sleep
+    fail_sends(h, 100)
+    assert await h.game.messenger.send_question(1, TEXT_VIEW, 0) is None
+    assert len(sleeps) == 4  # 1 спроба + 3 повтори, і далі гра йде за серверним таймером
+
+
+async def test_warmup_continues_after_one_failed_image(h):
+    fail_sends(h, 1, SendPhoto)
+    result = await h.media.warmup(h.bot, ADMIN_ID, h.content)
+    assert len(result.failed) == 1 and len(result.uploaded) == 1
+
+
+async def test_manual_warmup_reports_failed_images(h):
+    fail_sends(h, 100, SendPhoto)
+    await h.send(ADMIN_ID, "/warmup")
+    assert "Не вдалося завантажити в Telegram (2)" in h.last_text(ADMIN_ID)
+
+
+async def test_start_is_not_held_by_a_hanging_warmup(h, session_factory, monkeypatch):
+    """Один завислий запит більше не затримує старт на хвилину (було 60 983 мс)."""
+    from bot.handlers import admin as admin_handlers
+
+    monkeypatch.setattr(admin_handlers, "WARMUP_TIMEOUT", 0.1)
+    original = h.session.make_request
+
+    async def hanging(bot, method, timeout=None):
+        if isinstance(method, SendPhoto) and method.chat_id == ADMIN_ID:
+            await asyncio.sleep(30)
+        return await original(bot, method, timeout)
+
+    h.session.make_request = hanging
+    started = asyncio.get_running_loop().time()
+    await open_and_start(h, session_factory, users=(6001,))
+    assert asyncio.get_running_loop().time() - started < 5
+    async with session_factory() as s:
+        assert (await repo.get_game_state(s)).phase == Phase.RUNNING
+    assert h.content.messages["quest_started"] in h.texts(6001)
