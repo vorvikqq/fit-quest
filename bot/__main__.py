@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from collections.abc import Awaitable, Callable
 
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramUnauthorizedError
+from aiogram.exceptions import TelegramNetworkError, TelegramUnauthorizedError
 
 from bot.app import build_dispatcher
 from bot.config import Settings, get_settings
@@ -50,6 +51,26 @@ def load_content_or_exit(settings: Settings):
         )
     log.info("Контент: %d раундів, %d питань", len(content.rounds), content.question_count)
     return content, report
+
+
+async def connect_telegram(
+    bot: Bot, attempts: int = 8, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+):
+    """`getMe` із повторами: одне скидання з'єднання при старті не повинно вбивати бота.
+
+    Невірний токен (`TelegramUnauthorizedError`) не повторюємо: тут повтор нічого не змінить.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return await bot.get_me()
+        except TelegramNetworkError as exc:
+            if attempt == attempts:
+                raise
+            delay = min(2.0 * attempt, 15.0)
+            log.warning(
+                "Telegram недоступний (спроба %d з %d): %s. Повтор через %.0f с", attempt, attempts, exc, delay
+            )
+            await sleep(delay)
 
 
 async def main() -> None:
@@ -107,7 +128,7 @@ async def main() -> None:
     )
 
     try:
-        me = await bot.get_me()
+        me = await connect_telegram(bot)
         log.info("Бот запущено: @%s", me.username)
         await recover(game)  # §7: прострочені питання закрити, живі — перепланувати
         watchdog = asyncio.create_task(run_watchdog(game))
