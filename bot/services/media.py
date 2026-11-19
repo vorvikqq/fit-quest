@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -21,12 +22,16 @@ from bot.content.models import Content
 from bot.db import repo
 
 
+log = logging.getLogger(__name__)
+
+
 @dataclass
 class WarmupResult:
     uploaded: list[str] = field(default_factory=list)
     cached: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)  # Telegram не прийняв/не відповів
+    reasons: dict[str, str] = field(default_factory=dict)  # картинка → текст помилки
 
 
 class MediaService:
@@ -91,8 +96,11 @@ class MediaService:
             else:
                 try:
                     msg = await bot.send_photo(chat_id, FSInputFile(self.path(rel)), caption=rel)
-                except TelegramAPIError:
-                    result.failed.append(rel)  # мережа/ліміти: решту картинок усе одно пробуємо
+                except TelegramAPIError as exc:
+                    # мережа/ліміти: решту картинок усе одно пробуємо, а причину не ховаємо
+                    log.warning("Прогрів: %s не завантажено: %s: %s", rel, type(exc).__name__, exc)
+                    result.failed.append(rel)
+                    result.reasons[rel] = f"{type(exc).__name__}: {exc}"
                     continue
                 await self.remember(rel, msg.photo[-1].file_id)
                 result.uploaded.append(rel)

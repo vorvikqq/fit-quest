@@ -277,3 +277,28 @@ async def test_start_is_not_held_by_a_hanging_warmup(h, session_factory, monkeyp
     async with session_factory() as s:
         assert (await repo.get_game_state(s)).phase == Phase.RUNNING
     assert h.content.messages["quest_started"] in h.texts(6001)
+
+
+async def test_manual_warmup_shows_the_real_reason_of_failure(h, caplog):
+    """Раніше причина губилась, і адмін бачив лише «Не вдалося»: тепер вона в чаті й у логу."""
+    fail_sends(h, 100, SendPhoto)
+    with caplog.at_level("WARNING"):
+        await h.send(ADMIN_ID, "/warmup")
+    text = h.last_text(ADMIN_ID)
+    assert "Причина: TelegramNetworkError" in text and "Request timeout error" in text
+    assert any("не завантажено" in r.message and "Request timeout error" in r.message for r in caplog.records)
+
+
+async def test_failure_reason_is_html_escaped(h):
+    from aiogram.exceptions import TelegramBadRequest
+
+    original = h.session.make_request
+
+    async def rejecting(bot, method, timeout=None):
+        if isinstance(method, SendPhoto):
+            raise TelegramBadRequest(method, "<b>Bad Request</b> & more")
+        return await original(bot, method, timeout)
+
+    h.session.make_request = rejecting
+    await h.send(ADMIN_ID, "/warmup")  # якби не екранувалось, Telegram відхилив би саме це повідомлення
+    assert "&lt;b&gt;Bad Request&lt;/b&gt; &amp; more" in h.last_text(ADMIN_ID)

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from html import escape
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -197,8 +198,11 @@ async def cmd_warmup(message: Message, bot: Bot, media: MediaService, game: Game
         text += (
             f"\n⚠️ Не вдалося завантажити в Telegram ({len(result.failed)}): "
             + ", ".join(result.failed)
-            + "\nПеревір з'єднання сервера з Telegram і повтори /warmup."
         )
+        # Причина (однакова для всіх, якщо проблема в мережі) допомагає відрізнити збій каналу від відмови Telegram.
+        reasons = sorted(set(result.reasons.values()))
+        text += "\nПричина: " + escape("; ".join(reasons[:3]))[:600]
+        text += "\nПеревір з'єднання з Telegram (scripts/telegram_check.py) і повтори /warmup."
     await message.answer(text)
 
 
