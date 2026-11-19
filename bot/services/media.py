@@ -6,11 +6,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import FSInputFile
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -58,11 +60,29 @@ class MediaService:
         async with self._session_factory.begin() as session:
             await repo.set_media(session, rel, self.sha256(rel), file_id)
 
-    async def warmup(self, bot: Bot, chat_id: int, content: Content) -> WarmupResult:
-        """`/warmup`: надсилає адміну картинки без актуального `file_id` й запам'ятовує його."""
-        result = WarmupResult()
-        images = sorted({q.image for _, _, q in content.iter_questions() if q.image})
+    @staticmethod
+    def images_of(content: Content) -> list[str]:
+        return sorted({q.image for _, _, q in content.iter_questions() if q.image})
+
+    async def cache_status(self, content: Content) -> tuple[int, int]:
+        """(скільки картинок уже має актуальний file_id, скільки всього) для панелі адміна."""
+        images = self.images_of(content)
+        cached = 0
         for rel in images:
+            if self.path(rel).is_file() and await self.cached_file_id(rel) is not None:
+                cached += 1
+        return cached, len(images)
+
+    async def warmup(
+        self, bot: Bot, chat_id: int, content: Content, *, cleanup: bool = False
+    ) -> WarmupResult:
+        """`/warmup`: надсилає адміну картинки без актуального `file_id` й запам'ятовує його.
+
+        `cleanup=True` видаляє службові повідомлення з чату адміна одразу після кешування
+        (так робить автоматичний прогрів при `/start_quest`, щоб не засмічувати чат).
+        """
+        result = WarmupResult()
+        for rel in self.images_of(content):
             if not self.path(rel).is_file():
                 result.missing.append(rel)
             elif await self.cached_file_id(rel) is not None:
@@ -71,4 +91,7 @@ class MediaService:
                 msg = await bot.send_photo(chat_id, FSInputFile(self.path(rel)), caption=rel)
                 await self.remember(rel, msg.photo[-1].file_id)
                 result.uploaded.append(rel)
+                if cleanup:
+                    with contextlib.suppress(TelegramAPIError):
+                        await bot.delete_message(chat_id, msg.message_id)
         return result

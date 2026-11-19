@@ -77,6 +77,13 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True),
     )
     media = MediaService(session_factory, settings.content_root)
+    cached, total_images = await media.cache_status(content)
+    if cached < total_images:
+        log.warning(
+            "Картинки в кеші Telegram: %d з %d. Прогрів зробить /start_quest, або виконай /warmup",
+            cached,
+            total_images,
+        )
     game = GameService(
         session_factory, content, TelegramMessenger(bot, content, media, session_factory)
     )

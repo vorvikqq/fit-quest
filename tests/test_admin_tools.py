@@ -325,7 +325,7 @@ async def test_warmup_uploads_missing_images_once(session_factory):
     assert "завантажено 10, уже було 0" in h2.last_text(ADMIN_ID)
     assert len(h2.photos(ADMIN_ID)) == 10
     async with session_factory() as s:
-        row = await repo.get_media(s, "images/r5_photo_01.png")
+        row = await repo.get_media(s, "images/r5_photo_01.jpg")
     assert row is not None and row.file_id.startswith("FID-") and len(row.sha256) == 64
 
     h2.clear()
@@ -336,17 +336,17 @@ async def test_warmup_uploads_missing_images_once(session_factory):
 
 async def test_warmup_reuploads_changed_file_and_reports_missing(session_factory, tmp_path):
     (tmp_path / "images").mkdir()
-    shutil.copy(PROJECT_ROOT / "content" / "images" / "r5_photo_01.png", tmp_path / "images" / "r5_photo_01.png")
+    shutil.copy(PROJECT_ROOT / "content" / "images" / "r5_photo_01.jpg", tmp_path / "images" / "r5_photo_01.jpg")
     async with session_factory.begin() as s:
         await repo.ensure_game_state(s)
     h2 = Harness(session_factory)
     h2.media.content_root = tmp_path  # у каталозі лише одна картинка з десяти
     await h2.send(ADMIN_ID, "/warmup")
     text = h2.last_text(ADMIN_ID)
-    assert "завантажено 1" in text and "Немає файлів" in text and "r5_prompt_05.png" in text
+    assert "завантажено 1" in text and "Немає файлів" in text and "r5_prompt_05.jpg" in text
 
-    (tmp_path / "images" / "r5_photo_01.png").write_bytes(
-        (tmp_path / "images" / "r5_photo_01.png").read_bytes() + b"0"
+    (tmp_path / "images" / "r5_photo_01.jpg").write_bytes(
+        (tmp_path / "images" / "r5_photo_01.jpg").read_bytes() + b"0"
     )  # файл змінився → новий sha256
     h2.media._sha_cache.clear()
     h2.clear()

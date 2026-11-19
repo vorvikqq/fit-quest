@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 from collections.abc import Callable
@@ -273,14 +274,21 @@ class GameService:
         self.scheduler.cancel(snapshot.id)
         suffix = self.content.messages["time_is_up" if chosen is None else "answer_accepted"]
         view = render_question(self.index, plan, cursor)
-        await self.messenger.close_question(snapshot.tg_id, snapshot.q_message_id, view, suffix)
 
-        if next_status == AttemptStatus.FINISHED:
-            await self._finish(updated)
-        elif next_status == AttemptStatus.ROUND_INTRO:
-            await self._send_card(updated)
-        else:
-            await self.send_current_question(updated)
+        async def advance() -> None:
+            if next_status == AttemptStatus.FINISHED:
+                await self._finish(updated)
+            elif next_status == AttemptStatus.ROUND_INTRO:
+                await self._send_card(updated)
+            else:
+                await self.send_current_question(updated)
+
+        # Паралельно: правка попереднього питання не гальмує появу наступного
+        # (Telegram може затримувати правки, а учасник чекає саме нове питання).
+        await asyncio.gather(
+            self.messenger.close_question(snapshot.tg_id, snapshot.q_message_id, view, suffix),
+            advance(),
+        )
         return True
 
     # ------------------------------------------------------------------

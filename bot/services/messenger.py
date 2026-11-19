@@ -66,6 +66,7 @@ class TelegramMessenger:
         self._session_factory = session_factory
         self._retries = retries
         self._sleep = sleep
+        self._upload_locks: dict[str, asyncio.Lock] = {}  # картинка → замок завантаження
 
     # --- обгортка з обробкою типових збоїв ---------------------------------
 
@@ -116,19 +117,33 @@ class TelegramMessenger:
     async def _send_photo(
         self, tg_id: int, rel: str, caption: str | None, markup: InlineKeyboardMarkup | None
     ) -> int | None:
-        """Спершу кешований file_id; якщо його нема чи він не підійшов — вантажимо файл і кешуємо."""
-        file_id = await self.media.cached_file_id(rel)
-        if file_id is not None:
-            try:
-                msg = await self._call(
-                    tg_id,
-                    lambda: self.bot.send_photo(tg_id, file_id, caption=caption, reply_markup=markup),
-                    reraise_bad_request=True,
-                )
-                return msg.message_id if msg else None
-            except TelegramBadRequest:
-                log.warning("file_id для %s не підійшов, вантажу файл", rel)
+        """Спершу кешований file_id; якщо його нема чи він не підійшов — вантажимо файл і кешуємо.
 
+        Завантаження одне на картинку: поки перший учасник вантажить файл, решта чекають на замок
+        й беруть уже готовий `file_id`. Без цього 200 людей, що дійшли до фото одночасно, вантажили б
+        по ~1 МБ кожен паралельно (хвилини очікування, особливо з домашнього інтернету).
+        """
+        file_id = await self.media.cached_file_id(rel)
+        if file_id is None:
+            async with self._upload_locks.setdefault(rel, asyncio.Lock()):
+                file_id = await self.media.cached_file_id(rel)  # перший міг уже закешувати
+                if file_id is None:
+                    return await self._upload_photo(tg_id, rel, caption, markup)
+
+        try:
+            msg = await self._call(
+                tg_id,
+                lambda: self.bot.send_photo(tg_id, file_id, caption=caption, reply_markup=markup),
+                reraise_bad_request=True,
+            )
+            return msg.message_id if msg else None
+        except TelegramBadRequest:
+            log.warning("file_id для %s не підійшов, вантажу файл", rel)
+            return await self._upload_photo(tg_id, rel, caption, markup)
+
+    async def _upload_photo(
+        self, tg_id: int, rel: str, caption: str | None, markup: InlineKeyboardMarkup | None
+    ) -> int | None:
         upload = FSInputFile(self.media.path(rel))
         msg = await self._call(
             tg_id,

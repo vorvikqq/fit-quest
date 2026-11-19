@@ -31,7 +31,13 @@ CANCELLED = "Скасовано."
 NOTHING_TO_BROADCAST = "Немає тексту для розсилки (можливо, бот перезапускався). Надішли /broadcast ще раз."
 
 
-def panel(state: GameState, counters: Counters, question_count: int, todo_count: int) -> str:
+def panel(
+    state: GameState,
+    counters: Counters,
+    question_count: int,
+    todo_count: int,
+    images: tuple[int, int] | None = None,
+) -> str:
     code = (
         f"<code>{escape(state.access_code)}</code>"
         if state.access_code.strip()
@@ -50,7 +56,19 @@ def panel(state: GameState, counters: Counters, question_count: int, todo_count:
         f"Грають: {counters.in_progress} · Завершили: {counters.finished} · "
         f"Закрито недопройдених: {counters.closed_unfinished}\n"
         "\n"
-        f"Контент: {question_count} питань, {todo}"
+        f"Контент: {question_count} питань, {todo}" + _images_line(images)
+    )
+
+
+def _images_line(images: tuple[int, int] | None) -> str:
+    if images is None or images[1] == 0:
+        return ""
+    cached, total = images
+    if cached == total:
+        return f"\nКартинки в кеші Telegram: {cached} з {total} ✅"
+    return (
+        f"\nКартинки в кеші Telegram: {cached} з {total} ⚠️ виконай /warmup "
+        "(при /start_quest прогрів робиться автоматично)"
     )
 
 

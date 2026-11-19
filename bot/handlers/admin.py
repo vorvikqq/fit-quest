@@ -28,6 +28,7 @@ from bot.middlewares import AdminOnlyMiddleware
 from bot.services import phases
 from bot.services.broadcast import Broadcaster
 from bot.services.game import GameService
+from bot.services.media import MediaService
 from bot.services.results import render_header, render_review
 
 log = logging.getLogger(__name__)
@@ -65,12 +66,16 @@ def _spawn(coro: Awaitable[None]) -> None:
 
 
 async def _render_panel(
-    session_factory: async_sessionmaker[AsyncSession], content: Content, report: Report
+    session_factory: async_sessionmaker[AsyncSession],
+    content: Content,
+    report: Report,
+    media: MediaService,
 ) -> str:
     async with session_factory() as session:
         state = await repo.get_game_state(session)
         counters = await repo.get_counters(session)
-    return texts.panel(state, counters, content.question_count, len(report.todos))
+    images = await media.cache_status(content)
+    return texts.panel(state, counters, content.question_count, len(report.todos), images)
 
 
 @router.message(Command("admin"))
@@ -79,8 +84,9 @@ async def cmd_admin(
     session_factory: async_sessionmaker[AsyncSession],
     content: Content,
     content_report: Report,
+    media: MediaService,
 ) -> None:
-    text = await _render_panel(session_factory, content, content_report)
+    text = await _render_panel(session_factory, content, content_report, media)
     await message.answer(text, reply_markup=admin_panel_kb())
 
 
@@ -90,10 +96,11 @@ async def on_refresh(
     session_factory: async_sessionmaker[AsyncSession],
     content: Content,
     content_report: Report,
+    media: MediaService,
 ) -> None:
     await callback.answer()
     if isinstance(callback.message, Message):
-        text = await _render_panel(session_factory, content, content_report)
+        text = await _render_panel(session_factory, content, content_report, media)
         # «message is not modified», якщо нічого не змінилось — це не помилка
         with contextlib.suppress(TelegramAPIError):
             await callback.message.edit_text(text, reply_markup=admin_panel_kb())
@@ -345,6 +352,7 @@ async def on_confirm(
     content_hash: str,
     broadcaster: Broadcaster,
     game: GameService,
+    media: MediaService,
 ) -> None:
     await callback.answer()
     admin_id = callback.from_user.id
@@ -362,6 +370,18 @@ async def on_confirm(
                     texts.second_confirm("reset_all"), reply_markup=confirm_kb("reset_all", arg=1)
                 )
         return
+
+    if action == "start_quest" and callback_data.yes:
+        # Прогріваємо кеш картинок ДО старту: інакше перші учасники, що дійшли до фото, самі
+        # завантажують файли на Telegram (хвилини очікування). Збій прогріву старт не блокує.
+        try:
+            warm = await media.warmup(callback.bot, admin_id, game.content, cleanup=True)  # type: ignore[arg-type]
+            if warm.uploaded:
+                log.info("Прогрів перед стартом: завантажено %d картинок", len(warm.uploaded))
+            if warm.missing:
+                log.error("Прогрів: немає файлів картинок: %s", ", ".join(warm.missing))
+        except Exception:  # noqa: BLE001
+            log.exception("Прогрів картинок перед стартом не вдався (старт триває)")
 
     now = datetime.now(UTC)
     followup: Awaitable[None] | None = None
