@@ -30,6 +30,17 @@ async def h(session_factory):
     return Harness(session_factory, content=make_content())
 
 
+def no_waits(h: Harness) -> list[float]:
+    """Паузи між повторами прогріву не чекаємо; повертає список запитаних пауз."""
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    h.media._sleep = fake_sleep
+    return sleeps
+
+
 def slow_uploads(h: Harness, delay: float = 0.05):
     """Завантаження файлу (FSInputFile) триває, відправка за file_id миттєва."""
     original = h.session.make_request
@@ -145,6 +156,7 @@ async def test_start_quest_warms_images_before_announcing(h, session_factory):
 
 
 async def test_warmup_failure_does_not_block_start(h, session_factory):
+    no_waits(h)
     original = h.session.make_request
 
     async def broken(bot, method, timeout=None):
@@ -246,13 +258,24 @@ async def test_network_error_gives_up_after_retries(h):
     assert len(sleeps) == 4  # 1 спроба + 3 повтори, і далі гра йде за серверним таймером
 
 
-async def test_warmup_continues_after_one_failed_image(h):
+async def test_warmup_survives_a_one_off_network_stall(h):
+    """Разове зависання (як у логу) не провалює картинку: повтор проходить."""
+    sleeps = no_waits(h)
     fail_sends(h, 1, SendPhoto)
+    result = await h.media.warmup(h.bot, ADMIN_ID, h.content)
+    assert result.failed == [] and len(result.uploaded) == 2
+    assert sleeps == [1.0]
+
+
+async def test_warmup_continues_after_one_image_fails_completely(h):
+    no_waits(h)
+    fail_sends(h, 3, SendPhoto)  # усі 3 спроби першої картинки
     result = await h.media.warmup(h.bot, ADMIN_ID, h.content)
     assert len(result.failed) == 1 and len(result.uploaded) == 1
 
 
 async def test_manual_warmup_reports_failed_images(h):
+    no_waits(h)
     fail_sends(h, 100, SendPhoto)
     await h.send(ADMIN_ID, "/warmup")
     assert "Не вдалося завантажити в Telegram (2)" in h.last_text(ADMIN_ID)
@@ -281,6 +304,7 @@ async def test_start_is_not_held_by_a_hanging_warmup(h, session_factory, monkeyp
 
 async def test_manual_warmup_shows_the_real_reason_of_failure(h, caplog):
     """Раніше причина губилась, і адмін бачив лише «Не вдалося»: тепер вона в чаті й у логу."""
+    no_waits(h)
     fail_sends(h, 100, SendPhoto)
     with caplog.at_level("WARNING"):
         await h.send(ADMIN_ID, "/warmup")

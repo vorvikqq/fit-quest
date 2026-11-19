@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import logging
@@ -13,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramNetworkError, TelegramRetryAfter
 from aiogram.types import FSInputFile
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -23,6 +24,7 @@ from bot.db import repo
 
 
 log = logging.getLogger(__name__)
+WARMUP_ATTEMPTS = 3  # спроб на одну картинку
 
 
 @dataclass
@@ -39,6 +41,22 @@ class MediaService:
         self._session_factory = session_factory
         self.content_root = content_root
         self._sha_cache: dict[str, tuple[float, str]] = {}  # rel → (mtime, sha256)
+        self._sleep = asyncio.sleep
+
+    async def _send_with_retries(self, bot: Bot, chat_id: int, rel: str):
+        """Одна картинка з повторами: канал до Telegram переривчастий (разові зависання)."""
+        for attempt in range(1, WARMUP_ATTEMPTS + 1):
+            try:
+                return await bot.send_photo(chat_id, FSInputFile(self.path(rel)), caption=rel)
+            except TelegramRetryAfter as exc:
+                if attempt == WARMUP_ATTEMPTS:
+                    raise
+                await self._sleep(min(exc.retry_after, 30))
+            except TelegramNetworkError as exc:
+                if attempt == WARMUP_ATTEMPTS:
+                    raise
+                log.warning("Прогрів: %s, спроба %d з %d: %s", rel, attempt, WARMUP_ATTEMPTS, exc)
+                await self._sleep(float(attempt))
 
     def path(self, rel: str) -> Path:
         return self.content_root / rel
@@ -95,7 +113,7 @@ class MediaService:
                 result.cached.append(rel)
             else:
                 try:
-                    msg = await bot.send_photo(chat_id, FSInputFile(self.path(rel)), caption=rel)
+                    msg = await self._send_with_retries(bot, chat_id, rel)
                 except TelegramAPIError as exc:
                     # мережа/ліміти: решту картинок усе одно пробуємо, а причину не ховаємо
                     log.warning("Прогрів: %s не завантажено: %s: %s", rel, type(exc).__name__, exc)
