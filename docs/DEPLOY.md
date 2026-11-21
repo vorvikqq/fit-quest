@@ -150,7 +150,7 @@ curl -s "http://127.0.0.1:8080/api/board?token=$(grep BOARD_TOKEN .env | cut -d=
 У @BotFather для бойового бота:
 
 - `/setname`, `/setuserpic` (лого ФІТ / студпарламенту), `/setdescription`, `/setabouttext`;
-- `/setcommands` → лише `start` (адмін-команди учасникам показувати не треба);
+- `/setcommands` → `start` і `results` (розбір відповідей після публікації результатів); адмін-команди учасникам показувати не треба;
 - `/setprivacy` → Enable (бот працює лише в особистих повідомленнях).
 
 ## 7. Перший запуск у боті (адмін)

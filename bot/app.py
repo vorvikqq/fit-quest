@@ -19,6 +19,7 @@ from bot.services.media import MediaService
 from bot.services.ratelimit import SlidingWindowLimiter
 
 CODE_ATTEMPTS_PER_MINUTE = 5  # DESIGN §13
+REVIEW_REQUESTS_PER_MINUTE = 2  # розбір /results: кілька повідомлень, не даємо спамити
 
 
 def build_dispatcher(
@@ -51,6 +52,7 @@ def build_dispatcher(
     dp["board_url"] = board_url
     dp["board_token"] = board_token
     dp["code_limiter"] = SlidingWindowLimiter(CODE_ATTEMPTS_PER_MINUTE, 60)
+    dp["review_limiter"] = SlidingWindowLimiter(REVIEW_REQUESTS_PER_MINUTE, 60)
 
     # Порядок: throttling (дешево, відсікає спам) → user-upsert → хендлери.
     dp.callback_query.outer_middleware(ThrottlingMiddleware(throttle_interval))
